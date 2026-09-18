@@ -1,0 +1,1 @@
+{"protocol_version":1,"type":"compile","request_id":"req-1","code":"def answer : Nat := 42"}

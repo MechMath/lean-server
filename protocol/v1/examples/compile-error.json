@@ -1,0 +1,1 @@
+{"protocol_version":1,"type":"result","request_id":"req-2","status":"compile_error","compile_ms":14.0,"warnings":[],"errors":[{"severity":"error","message":"type mismatch","file_name":"<stdin>","start":{"line":1,"column":20},"end":{"line":1,"column":24}}]}
