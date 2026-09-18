@@ -1,0 +1,43 @@
+{
+  "total": 51336,
+  "audit_lines": {
+    "axle": 51341,
+    "local": 51393
+  },
+  "latest_status": {
+    "axle": {
+      "passed": 35837,
+      "failed": 15499
+    },
+    "local": {
+      "passed": 37060,
+      "failed": 11218,
+      "error": 3058
+    }
+  },
+  "matrix": {
+    "axle_failed__local_error": 2571,
+    "axle_failed__local_failed": 11139,
+    "axle_failed__local_passed": 1789,
+    "axle_passed__local_error": 487,
+    "axle_passed__local_failed": 79,
+    "axle_passed__local_passed": 35271
+  },
+  "same_terminal_status": 46410,
+  "disagreements": 4926,
+  "local_infrastructure_error_types": {
+    "NonRetryableInfrastructureError": 3057,
+    "RetryableRequestError": 1
+  },
+  "local_infrastructure_error_messages": {
+    "HTTP 503: {\"error\": \"Separator is not found, and chunk exceed the limit\", \"retryable\": true}": 1652,
+    "HTTP 503: {\"error\": \"Separator is found, but chunk is longer than limit\", \"retryable\": true}": 1405,
+    "HTTP 503: {\"error\": \"worker exited with status 1: INTERNAL PANIC: Nat.pow exponent is too big\", \"retryable\": true}": 1
+  },
+  "files": {
+    "dataset": "external:reasoning_data_messages_pre_filter.jsonl",
+    "axle": "external:reasoning_data_axle_lean-4.30.0_results.jsonl",
+    "local": "external:reasoning_data_local_lean-4.30.0_results.jsonl",
+    "disagreements": "data/disagreements.jsonl"
+  }
+}
