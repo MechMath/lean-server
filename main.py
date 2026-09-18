@@ -1,5 +1,4 @@
-def main():
-    print("Hello from lean-server!")
+from lean_server.__main__ import main
 
 
 if __name__ == "__main__":
