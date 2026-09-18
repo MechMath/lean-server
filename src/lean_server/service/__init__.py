@@ -3,6 +3,8 @@ from .pool import (
     PoolClosedError,
     PoolOverloadedError,
     PoolSnapshot,
+    PoolTimeoutError,
+    PoolWorkerError,
 )
 
 __all__ = [
@@ -10,4 +12,6 @@ __all__ = [
     "PoolClosedError",
     "PoolOverloadedError",
     "PoolSnapshot",
+    "PoolTimeoutError",
+    "PoolWorkerError",
 ]
