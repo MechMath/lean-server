@@ -187,7 +187,16 @@ class CompilerPool:
                         return
                     backend = replacement
                 else:
-                    if not item.future.done():
+                    if result.status == "internal_error":
+                        if not item.future.done():
+                            item.future.set_exception(
+                                PoolWorkerError("worker returned internal_error")
+                            )
+                        replacement = await self._replace_backend(index, backend)
+                        if replacement is None:
+                            return
+                        backend = replacement
+                    elif not item.future.done():
                         item.future.set_result(result)
                 finally:
                     self._active_workers -= 1

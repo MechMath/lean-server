@@ -46,6 +46,27 @@ for line in sys.stdin:
             }
         )
         continue
+    if code == "__INTERNAL_ERROR__":
+        emit(
+            {
+                "protocol_version": 1,
+                "type": "result",
+                "request_id": request_id,
+                "status": "internal_error",
+                "compile_ms": 1.0,
+                "warnings": [],
+                "errors": [
+                    {
+                        "severity": "error",
+                        "message": "fake internal error",
+                        "file_name": None,
+                        "start": None,
+                        "end": None,
+                    }
+                ],
+            }
+        )
+        continue
     emit(
         {
             "protocol_version": 1,

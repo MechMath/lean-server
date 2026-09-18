@@ -68,6 +68,14 @@ class PoolRecoveryTests(unittest.IsolatedAsyncioTestCase):
         result = await self.pool.compile(WorkerRequest("following", "code"))
         self.assertEqual(result.status, "ok")
 
+    async def test_internal_error_replaces_worker(self) -> None:
+        with self.assertRaises(PoolWorkerError):
+            await self.pool.compile(WorkerRequest("internal", "__INTERNAL_ERROR__"))
+        await wait_until_ready(self.pool, 2)
+
+        result = await self.pool.compile(WorkerRequest("following", "code"))
+        self.assertEqual(result.status, "ok")
+
     async def test_close_cancels_active_and_queued_requests(self) -> None:
         active = asyncio.create_task(
             self.pool.compile(WorkerRequest("active", "__SLEEP__:10"))
