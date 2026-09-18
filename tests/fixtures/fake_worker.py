@@ -67,6 +67,27 @@ for line in sys.stdin:
             }
         )
         continue
+    if code == "__WARNING__":
+        emit(
+            {
+                "protocol_version": 1,
+                "type": "result",
+                "request_id": request_id,
+                "status": "ok",
+                "compile_ms": 1.0,
+                "warnings": [
+                    {
+                        "severity": "warning",
+                        "message": "fake warning",
+                        "file_name": "<stdin>",
+                        "start": {"line": 1, "column": 0},
+                        "end": {"line": 1, "column": 1},
+                    }
+                ],
+                "errors": [],
+            }
+        )
+        continue
     emit(
         {
             "protocol_version": 1,

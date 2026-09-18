@@ -1,3 +1,4 @@
+from .cli import LeanCliBackend
 from .process import (
     WorkerError,
     WorkerExitedError,
@@ -7,6 +8,7 @@ from .process import (
 )
 
 __all__ = [
+    "LeanCliBackend",
     "WorkerError",
     "WorkerExitedError",
     "WorkerProcessBackend",

@@ -6,9 +6,11 @@ from .pool import (
     PoolTimeoutError,
     PoolWorkerError,
 )
+from .runtime import CompilerPoolRuntime
 
 __all__ = [
     "CompilerPool",
+    "CompilerPoolRuntime",
     "PoolClosedError",
     "PoolOverloadedError",
     "PoolSnapshot",
