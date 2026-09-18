@@ -22,6 +22,17 @@ ThreadingHTTPServer
 
 ## 启动
 
+服务在绑定 HTTP 端口前执行一次启动检查：
+
+- `lean-toolchain` 必须固定为 `leanprover/lean4:v4.30.0`；
+- 固定 toolchain 与 `lake env lean` 都必须实际报告 Lean 4.30.0；
+- `lakefile.toml` 和 `lake-manifest.json` 必须固定 Mathlib v4.30.0；
+- `.lake/packages/mathlib` 的实际 Git revision 必须与 manifest 一致；
+- `import Mathlib` smoke compile 必须成功。
+
+任一检查失败时进程以状态码 1 退出，不开放 HTTP 服务。检查成功后会打印实际 Mathlib
+revision 与耗时。
+
 使用当前可用的 Lean CLI backend：
 
 ```bash

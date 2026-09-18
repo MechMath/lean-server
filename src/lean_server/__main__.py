@@ -4,6 +4,7 @@ import argparse
 import shlex
 
 from .http import create_server
+from .preflight import StartupCheckError, run_startup_checks
 
 
 def main() -> None:
@@ -19,6 +20,16 @@ def main() -> None:
     args = parser.parse_args()
 
     worker_command = shlex.split(args.worker_command) if args.worker_command else None
+    try:
+        report = run_startup_checks()
+    except StartupCheckError as exc:
+        parser.exit(1, f"Lean server startup check failed: {exc}\n")
+    print(
+        "Startup checks passed: "
+        f"Lean {report.lean_version}, Mathlib {report.mathlib_revision[:12]}, "
+        f"{report.elapsed_ms:.0f}ms",
+        flush=True,
+    )
     server = create_server(
         args.host,
         args.port,
