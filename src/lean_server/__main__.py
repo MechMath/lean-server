@@ -17,6 +17,21 @@ def main() -> None:
         "--worker-command",
         help="NDJSON worker command; defaults to one Lean CLI process per request",
     )
+    parser.add_argument(
+        "--worker-startup-timeout",
+        default=180.0,
+        type=float,
+        help=(
+            "seconds to wait for each persistent worker ready handshake "
+            "(default: 180)"
+        ),
+    )
+    parser.add_argument(
+        "--worker-startup-parallelism",
+        default=8,
+        type=int,
+        help="maximum workers started concurrently (default: 8)",
+    )
     args = parser.parse_args()
 
     worker_command = shlex.split(args.worker_command) if args.worker_command else None
@@ -36,6 +51,8 @@ def main() -> None:
         worker_count=args.workers,
         queue_capacity=args.queue_capacity,
         worker_command=worker_command,
+        worker_startup_timeout_seconds=args.worker_startup_timeout,
+        worker_startup_parallelism=args.worker_startup_parallelism,
     )
     print(f"Lean server listening on http://{args.host}:{args.port}", flush=True)
     try:

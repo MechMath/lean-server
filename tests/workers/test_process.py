@@ -5,7 +5,11 @@ import unittest
 from pathlib import Path
 
 from lean_server.protocol import WorkerRequest
-from lean_server.workers import WorkerProcessBackend, WorkerProtocolError
+from lean_server.workers import (
+    WorkerProcessBackend,
+    WorkerProtocolError,
+    WorkerStartupError,
+)
 
 
 FAKE_WORKER = Path(__file__).parents[1] / "fixtures" / "fake_worker.py"
@@ -39,6 +43,18 @@ class WorkerProcessTests(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_invalid_worker_output(self) -> None:
         with self.assertRaises(WorkerProtocolError):
             await self.worker.compile(WorkerRequest("req-invalid", "__INVALID_JSON__"))
+
+    async def test_reports_ready_handshake_timeout(self) -> None:
+        worker = WorkerProcessBackend(
+            [sys.executable, str(FAKE_WORKER), "--startup-delay", "1"],
+            startup_timeout_seconds=0.01,
+        )
+        with self.assertRaisesRegex(
+            WorkerStartupError,
+            r"worker ready handshake timed out after 0\.01 seconds",
+        ):
+            await worker.start()
+        await worker.close()
 
 
 if __name__ == "__main__":

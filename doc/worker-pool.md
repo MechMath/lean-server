@@ -45,14 +45,19 @@ uv run lean-server --workers 4 --queue-capacity 16
 uv run lean-server \
   --workers 4 \
   --queue-capacity 16 \
+  --worker-startup-timeout 180 \
+  --worker-startup-parallelism 8 \
   --worker-command '.lake/build/bin/lean-server-worker'
 ```
 
 `--worker-command` 使用 shell 风格字符串解析，但启动 subprocess 时不经过 shell。
+常驻 worker 启动时需要预加载 Mathlib，因此每个 ready handshake 默认允许 180 秒；pool
+默认最多同时启动 8 个 worker，避免大量进程同时读取 Mathlib，也避免逐个串行启动。两个值可
+分别通过 `--worker-startup-timeout` 和 `--worker-startup-parallelism` 调整。
 
 ## 生命周期和故障
 
-- 启动时所有 backend 必须 ready，之后才开始监听 HTTP。
+- 启动时以受限并行方式等待所有 backend ready，之后才开始监听 HTTP。
 - timeout、进程退出、EOF、非法协议、错误 request ID 和 `internal_error` 都会回收当前
   worker slot 并自动创建替代 worker。
 - Lean parser、elaborator 或类型错误返回 `compile_error`，不会回收 worker。

@@ -59,6 +59,7 @@ class CompilerPool:
         worker_count: int,
         queue_capacity: int,
         default_timeout_seconds: float = 30.0,
+        startup_parallelism: int = 8,
     ) -> None:
         if worker_count < 1:
             raise ValueError("worker_count must be at least 1")
@@ -66,10 +67,13 @@ class CompilerPool:
             raise ValueError("queue_capacity must be at least 1")
         if default_timeout_seconds <= 0:
             raise ValueError("default_timeout_seconds must be positive")
+        if startup_parallelism < 1:
+            raise ValueError("startup_parallelism must be at least 1")
         self._backend_factory = backend_factory
         self._worker_count = worker_count
         self._queue_capacity = queue_capacity
         self._default_timeout_seconds = default_timeout_seconds
+        self._startup_parallelism = startup_parallelism
         self._queue: asyncio.Queue[_Job | object] = asyncio.Queue(maxsize=queue_capacity)
         self._backends: list[CompilerBackend] = []
         self._tasks: list[asyncio.Task[None]] = []
@@ -95,13 +99,26 @@ class CompilerPool:
             raise PoolError(f"cannot start pool in state {self._state}")
         self._state = "starting"
         backends = [self._backend_factory() for _ in range(self._worker_count)]
-        started: list[CompilerBackend] = []
-        try:
-            for backend in backends:
+        startup_limit = asyncio.Semaphore(
+            min(self._startup_parallelism, self._worker_count)
+        )
+
+        async def start_backend(backend: CompilerBackend) -> None:
+            async with startup_limit:
                 await backend.start()
-                started.append(backend)
+
+        startup_tasks = [
+            asyncio.create_task(start_backend(backend)) for backend in backends
+        ]
+        try:
+            await asyncio.gather(*startup_tasks)
         except BaseException:
-            await asyncio.gather(*(backend.close() for backend in started), return_exceptions=True)
+            for task in startup_tasks:
+                task.cancel()
+            await asyncio.gather(*startup_tasks, return_exceptions=True)
+            await asyncio.gather(
+                *(backend.close() for backend in backends), return_exceptions=True
+            )
             self._state = "closed"
             raise
 

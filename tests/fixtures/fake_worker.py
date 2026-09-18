@@ -10,6 +10,9 @@ def emit(value: dict) -> None:
     sys.stdout.flush()
 
 
+if len(sys.argv) == 3 and sys.argv[1] == "--startup-delay":
+    time.sleep(float(sys.argv[2]))
+
 emit({"protocol_version": 1, "type": "ready", "lean_version": "4.30.0"})
 
 for line in sys.stdin:

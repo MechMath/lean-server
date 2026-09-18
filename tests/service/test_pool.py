@@ -49,7 +49,59 @@ class BackendTracker:
         return RecordingBackend(self)
 
 
+class StartupTracker:
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+        self.started = 0
+        self.two_active = asyncio.Event()
+        self.gate = asyncio.Event()
+
+    def factory(self) -> BlockingStartupBackend:
+        return BlockingStartupBackend(self)
+
+
+class BlockingStartupBackend:
+    def __init__(self, tracker: StartupTracker) -> None:
+        self.tracker = tracker
+
+    async def start(self) -> None:
+        self.tracker.active += 1
+        self.tracker.max_active = max(self.tracker.max_active, self.tracker.active)
+        if self.tracker.active == 2:
+            self.tracker.two_active.set()
+        try:
+            await self.tracker.gate.wait()
+            self.tracker.started += 1
+        finally:
+            self.tracker.active -= 1
+
+    async def compile(self, request: WorkerRequest) -> WorkerResult:
+        return successful_result(request)
+
+    async def close(self) -> None:
+        pass
+
+
 class CompilerPoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_limits_parallel_worker_startup(self) -> None:
+        tracker = StartupTracker()
+        pool = CompilerPool(
+            tracker.factory,
+            worker_count=5,
+            queue_capacity=1,
+            startup_parallelism=2,
+        )
+        start_task = asyncio.create_task(pool.start())
+        await asyncio.wait_for(tracker.two_active.wait(), timeout=1)
+
+        self.assertEqual(tracker.max_active, 2)
+        tracker.gate.set()
+        await start_task
+        self.assertEqual(tracker.started, 5)
+        self.assertEqual(tracker.max_active, 2)
+        await pool.close()
+
     async def test_limits_concurrency_to_worker_count(self) -> None:
         tracker = BackendTracker(blocked=True)
         pool = CompilerPool(tracker.factory, worker_count=2, queue_capacity=8)

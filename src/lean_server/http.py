@@ -207,6 +207,8 @@ def create_runtime(
     worker_count: int = 2,
     queue_capacity: int = 8,
     worker_command: Sequence[str] | None = None,
+    worker_startup_timeout_seconds: float = 180.0,
+    worker_startup_parallelism: int = 8,
 ) -> CompilerPoolRuntime:
     if worker_command is None:
         backend_factory = LeanCliBackend
@@ -214,13 +216,18 @@ def create_runtime(
         command = tuple(worker_command)
 
         def backend_factory() -> WorkerProcessBackend:
-            return WorkerProcessBackend(command, cwd=PROJECT_ROOT)
+            return WorkerProcessBackend(
+                command,
+                cwd=PROJECT_ROOT,
+                startup_timeout_seconds=worker_startup_timeout_seconds,
+            )
 
     pool = CompilerPool(
         backend_factory,
         worker_count=worker_count,
         queue_capacity=queue_capacity,
         default_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+        startup_parallelism=worker_startup_parallelism,
     )
     return CompilerPoolRuntime(pool)
 
@@ -233,11 +240,15 @@ def create_server(
     worker_count: int = 2,
     queue_capacity: int = 8,
     worker_command: Sequence[str] | None = None,
+    worker_startup_timeout_seconds: float = 180.0,
+    worker_startup_parallelism: int = 8,
 ) -> LeanHTTPServer:
     runtime = runtime or create_runtime(
         worker_count=worker_count,
         queue_capacity=queue_capacity,
         worker_command=worker_command,
+        worker_startup_timeout_seconds=worker_startup_timeout_seconds,
+        worker_startup_parallelism=worker_startup_parallelism,
     )
     server = LeanHTTPServer((host, port), runtime)
     try:

@@ -45,10 +45,12 @@ class WorkerProcessBackend:
         command: Sequence[str],
         *,
         cwd: Path | None = None,
-        startup_timeout_seconds: float = 30.0,
+        startup_timeout_seconds: float = 180.0,
     ) -> None:
         if not command:
             raise ValueError("worker command cannot be empty")
+        if startup_timeout_seconds <= 0:
+            raise ValueError("startup_timeout_seconds must be positive")
         self.command = tuple(command)
         self.cwd = cwd
         self.startup_timeout_seconds = startup_timeout_seconds
@@ -91,7 +93,13 @@ class WorkerProcessBackend:
             message = await asyncio.wait_for(
                 self._read_message(), timeout=self.startup_timeout_seconds
             )
-        except (TimeoutError, WorkerError) as exc:
+        except TimeoutError as exc:
+            await self.close()
+            raise WorkerStartupError(
+                "worker ready handshake timed out after "
+                f"{self.startup_timeout_seconds:g} seconds"
+            ) from exc
+        except WorkerError as exc:
             await self.close()
             raise WorkerStartupError(f"worker ready handshake failed: {exc}") from exc
         if not isinstance(message, WorkerReady):
