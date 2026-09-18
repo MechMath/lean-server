@@ -65,6 +65,13 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("code", body["error"])
 
+    def test_rejects_invalid_allow_sorry(self) -> None:
+        status, body = self.request(
+            "POST", "/api/v1/check", {"code": "code", "allow_sorry": "yes"}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("allow_sorry", body["error"])
+
     def test_compiles_valid_code(self) -> None:
         status, body = self.request("POST", "/api/v1/check", {"code": "def answer : Nat := 42"})
         self.assertEqual(status, 200)
@@ -100,6 +107,24 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(body["okay"])
         self.assertTrue(body["timed_out"])
+
+    def test_rejects_sorry_by_default(self) -> None:
+        status, body = self.request("POST", "/api/v1/check", {"code": "__SORRY__"})
+        self.assertEqual(status, 200)
+        self.assertFalse(body["okay"])
+        self.assertEqual(body["warnings"][0]["message"], "declaration uses `sorry`")
+        self.assertIn("allow_sorry is false", body["errors"][0]["message"])
+
+    def test_accepts_sorry_when_enabled(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/check",
+            {"code": "__SORRY__", "allow_sorry": True},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["okay"])
+        self.assertEqual(body["errors"], [])
+        self.assertEqual(body["warnings"][0]["message"], "declaration uses `sorry`")
 
     def test_maps_worker_crash_to_retryable_error(self) -> None:
         status, body = self.request("POST", "/api/v1/check", {"code": "__CRASH__"})

@@ -22,6 +22,7 @@ from .workers import LeanCliBackend, WorkerProcessBackend
 
 
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
+SORRY_WARNING_MESSAGE = "declaration uses `sorry`"
 
 
 class LeanHTTPServer(ThreadingHTTPServer):
@@ -126,6 +127,12 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
                 {"error": f"timeout_seconds must be between 0 and {MAX_TIMEOUT_SECONDS:g}"},
             )
             return
+        allow_sorry = request.get("allow_sorry", False)
+        if not isinstance(allow_sorry, bool):
+            self._json_response(
+                HTTPStatus.BAD_REQUEST, {"error": "allow_sorry must be a boolean"}
+            )
+            return
 
         started = time.perf_counter()
         worker_request = WorkerRequest(request_id=uuid.uuid4().hex, code=code)
@@ -160,18 +167,33 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
             return
 
         total_ms = (time.perf_counter() - started) * 1000
-        self._json_response(HTTPStatus.OK, _result_body(result, total_ms))
+        self._json_response(
+            HTTPStatus.OK, _result_body(result, total_ms, allow_sorry=allow_sorry)
+        )
 
 
-def _result_body(result: WorkerResult, total_ms: float) -> dict[str, Any]:
+def _result_body(
+    result: WorkerResult, total_ms: float, *, allow_sorry: bool
+) -> dict[str, Any]:
     queue_ms = max(0.0, total_ms - result.compile_ms)
+    warnings = [item.to_dict() for item in result.warnings]
+    errors = [item.to_dict() for item in result.errors]
+    rejected_sorries = [
+        item for item in result.warnings if item.message.strip() == SORRY_WARNING_MESSAGE
+    ]
+    if not allow_sorry:
+        for diagnostic in rejected_sorries:
+            error = diagnostic.to_dict()
+            error["severity"] = "error"
+            error["message"] = "declaration uses `sorry`, but allow_sorry is false"
+            errors.append(error)
     return {
-        "okay": result.status == "ok",
+        "okay": result.status == "ok" and (allow_sorry or not rejected_sorries),
         "timed_out": False,
         "time_ms": total_ms,
         "lean_version": "4.30.0",
-        "warnings": [item.to_dict() for item in result.warnings],
-        "errors": [item.to_dict() for item in result.errors],
+        "warnings": warnings,
+        "errors": errors,
         "timings": {
             "total_ms": total_ms,
             "queue_ms": queue_ms,

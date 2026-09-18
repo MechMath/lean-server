@@ -27,6 +27,14 @@ class LeanCliBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(warning.status, "ok")
         self.assertIn("unused variable", warning.warnings[0].message)
 
+    async def test_reports_sorry_as_a_warning(self) -> None:
+        result = await self.backend.compile(
+            WorkerRequest("sorry", "theorem unfinished : True := by sorry")
+        )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.warnings[0].message, "declaration uses `sorry`")
+
 
 if __name__ == "__main__":
     unittest.main()

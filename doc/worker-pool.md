@@ -78,6 +78,20 @@ pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
 
 当前 `queue_ms` 是 `total_ms - compile_ms`，包含很小的 transport 和调度开销。
 
+请求可以通过 `allow_sorry` 控制是否接受包含 `sorry` 的代码：
+
+```json
+{
+  "code": "theorem unfinished : True := by sorry",
+  "allow_sorry": false
+}
+```
+
+`allow_sorry` 必须是 JSON boolean，默认值为 `false`。为 `false` 时，Lean 原始 sorry
+warning 仍保留在 `warnings` 中，同时响应增加一条策略 error 并返回 `okay: false`；为
+`true` 时，sorry 保持为 warning，若无其他错误则返回 `okay: true`。该策略位于 HTTP
+层，不改变冻结的 worker protocol v1。
+
 ## 测试边界
 
 - `tests/service/test_pool.py`：并发上限、FIFO、有界队列和关闭状态。
