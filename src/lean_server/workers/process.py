@@ -48,6 +48,10 @@ class WorkerProtocolError(WorkerError):
     """The worker violated the versioned wire protocol."""
 
 
+class WorkerMessageTooLargeError(WorkerProtocolError):
+    """The worker emitted a message above the configured transport maximum."""
+
+
 class WorkerProcessBackend:
     """One asynchronous connection to one NDJSON worker process.
 
@@ -186,7 +190,7 @@ class WorkerProcessBackend:
         try:
             line = await process.stdout.readline()
         except ValueError as exc:
-            raise WorkerProtocolError(
+            raise WorkerMessageTooLargeError(
                 f"worker message exceeds {MAX_WORKER_MESSAGE_BYTES} bytes"
             ) from exc
         if not line:
@@ -201,7 +205,7 @@ class WorkerProcessBackend:
             raise WorkerExitedError(detail)
         try:
             if len(line) > MAX_WORKER_MESSAGE_BYTES:
-                raise WorkerProtocolError(
+                raise WorkerMessageTooLargeError(
                     f"worker message exceeds {MAX_WORKER_MESSAGE_BYTES} bytes"
                 )
             return decode_worker_message(line.decode("utf-8"))

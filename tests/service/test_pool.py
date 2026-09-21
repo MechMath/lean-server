@@ -148,6 +148,7 @@ class CompilerPoolTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(PoolOverloadedError):
             await pool.compile(WorkerRequest("rejected", "code"))
+        self.assertEqual(pool.metrics_snapshot.counters["overload_responses_total"], 1)
 
         tracker.gate.set()
         await asyncio.gather(active, queued)
@@ -175,6 +176,8 @@ class CompilerPoolTests(unittest.IsolatedAsyncioTestCase):
                     timeout=1,
                 )
             self.assertEqual(pool.snapshot.queue_depth, 0)
+            self.assertEqual(pool.metrics_snapshot.counters["queue_timeouts_total"], 1)
+            self.assertEqual(pool.metrics_snapshot.counters["execution_timeouts_total"], 0)
             self.assertEqual(tracker.order, ["active"])
             following = asyncio.create_task(pool.compile(WorkerRequest("following", "code")))
             await asyncio.sleep(0)

@@ -84,6 +84,46 @@ pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
 }
 ```
 
+## 累计指标
+
+`GET /metrics` 返回独立于 readiness 的 JSON 快照：
+
+```json
+{
+  "schema_version": 1,
+  "started_at": "2026-09-21T10:00:00Z",
+  "uptime_seconds": 3600.0,
+  "counters": {
+    "compile_requests_total": 100,
+    "verification_requests_total": 50,
+    "compile_semantic_failures_total": 20,
+    "verification_semantic_failures_total": 10,
+    "queue_timeouts_total": 1,
+    "execution_timeouts_total": 2,
+    "worker_crashes_total": 1,
+    "lean_panics_total": 1,
+    "worker_protocol_errors_total": 0,
+    "worker_message_too_large_total": 0,
+    "worker_replacements_total": 3,
+    "replacement_startup_failures_total": 0,
+    "overload_responses_total": 4
+  }
+}
+```
+
+所有 counter 都是线程安全、只增不减的 runtime 生命周期累计值。创建 runtime 时从零开始，
+进程重启或重新创建 runtime 时重置；服务不提供在线 reset，避免监控采集期间出现非单调值。
+`started_at` 标记本轮累计的起点，`uptime_seconds` 使用单调时钟计算。
+
+语义失败仅统计已经成功执行、但返回 `okay: false` 的编译或验证结果；timeout、overload、
+worker crash 和协议错误分别统计，不会重复计入语义失败。`lean_panics_total` 是
+`worker_crashes_total` 的子集，`worker_message_too_large_total` 是
+`worker_protocol_errors_total` 的子集。replacement 只在新 worker ready 后计数，失败的
+启动尝试单独计入 `replacement_startup_failures_total`。
+
+当前服务和 pool 不自动重试用户请求，因此没有 retry-exhaustion counter；重试由客户端负责，
+应由客户端记录相应指标。读取 `/metrics` 不影响 `/readyz` 的判断，也不修改任何 counter。
+
 ## HTTP 计时
 
 `POST /api/v1/check` 保留原来的 `time_ms`，并增加：
@@ -117,7 +157,8 @@ warning 仍保留在 `warnings` 中，同时响应增加一条策略 error 并�
 
 ## 测试边界
 
-- `tests/service/test_pool.py`：并发上限、FIFO、有界队列和关闭状态。
+- `tests/service/test_pool.py`：并发上限、FIFO、有界队列、关闭状态和调度指标。
+- `tests/service/test_metrics.py`：counter 名称、初始值和并发安全。
 - `tests/service/test_recovery.py`：timeout、crash、协议错误和 capacity recovery。
 - `tests/workers/test_process.py`：NDJSON subprocess transport。
 - `tests/workers/test_cli.py`：真实 Lean 4.30 CLI backend。

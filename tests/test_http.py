@@ -10,6 +10,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 from lean_server.http import create_runtime, create_server
+from lean_server.service import COUNTER_NAMES
 
 
 FAKE_WORKER = Path(__file__).parent / "fixtures" / "fake_worker.py"
@@ -57,6 +58,56 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["lean_version"], "4.30.0")
         self.assertEqual(body["pool"]["ready_workers"], 1)
+
+    def test_metrics_exposes_stable_process_lifetime_counters(self) -> None:
+        status, body = self.request("GET", "/metrics")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["schema_version"], 1)
+        self.assertTrue(body["started_at"].endswith("Z"))
+        self.assertGreaterEqual(body["uptime_seconds"], 0)
+        self.assertEqual(tuple(body["counters"]), COUNTER_NAMES)
+
+        ready_status, ready_body = self.request("GET", "/readyz")
+        self.assertEqual(ready_status, 200)
+        self.assertEqual(ready_body["status"], "ready")
+
+    def test_metrics_counts_compile_and_verification_semantic_failures(self) -> None:
+        before = self.request("GET", "/metrics")[1]["counters"]
+
+        compile_status, compile_body = self.request(
+            "POST", "/api/v1/check", {"code": "__ERROR__"}
+        )
+        verify_status, verify_body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "__TOOL_ERROR__",
+                "environment": "lean-4.30.0",
+            },
+        )
+        after = self.request("GET", "/metrics")[1]["counters"]
+
+        self.assertEqual(compile_status, 200)
+        self.assertFalse(compile_body["okay"])
+        self.assertEqual(verify_status, 200)
+        self.assertFalse(verify_body["okay"])
+        self.assertEqual(
+            after["compile_requests_total"], before["compile_requests_total"] + 1
+        )
+        self.assertEqual(
+            after["verification_requests_total"],
+            before["verification_requests_total"] + 1,
+        )
+        self.assertEqual(
+            after["compile_semantic_failures_total"],
+            before["compile_semantic_failures_total"] + 1,
+        )
+        self.assertEqual(
+            after["verification_semantic_failures_total"],
+            before["verification_semantic_failures_total"] + 1,
+        )
 
     def test_known_panic_is_explicit_and_not_a_proof_rejection(self) -> None:
         cases = (
@@ -345,6 +396,7 @@ class HTTPTests(unittest.TestCase):
         self.assertTrue(body["retryable"])
 
     def test_returns_overload_when_queue_is_full(self) -> None:
+        before = self.request("GET", "/metrics")[1]["counters"]
         with ThreadPoolExecutor(max_workers=2) as executor:
             active = executor.submit(
                 self.request,
@@ -366,6 +418,10 @@ class HTTPTests(unittest.TestCase):
             self.assertTrue(body["retryable"])
             self.assertEqual(active.result()[0], 200)
             self.assertEqual(queued.result()[0], 200)
+        after = self.request("GET", "/metrics")[1]["counters"]
+        self.assertEqual(
+            after["overload_responses_total"], before["overload_responses_total"] + 1
+        )
 
     def _wait_for_pool(self, *, active_workers: int, queue_depth: int) -> None:
         for _ in range(200):

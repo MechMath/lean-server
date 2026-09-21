@@ -116,6 +116,27 @@ for line in sys.stdin:
     if code == "__INVALID_JSON__":
         print("not-json", flush=True)
         continue
+    if code == "__OVERSIZED_RESPONSE__":
+        emit(
+            {
+                "protocol_version": 1,
+                "type": "result",
+                "request_id": request_id,
+                "status": "compile_error",
+                "compile_ms": 1.0,
+                "warnings": [],
+                "errors": [
+                    {
+                        "severity": "error",
+                        "message": "x" * (9 * 1024 * 1024),
+                        "file_name": "<stdin>",
+                        "start": None,
+                        "end": None,
+                    }
+                ],
+            }
+        )
+        continue
     if code.startswith("__SLEEP__:"):
         time.sleep(float(code.split(":", 1)[1]))
     if code == "__ERROR__":
