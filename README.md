@@ -18,7 +18,10 @@ uv run lean-server --host 127.0.0.1 --port 8000
 ```
 
 The server checks the pinned environment and preloads Mathlib before listening.
-Use `--workers 4 --queue-capacity 8` to configure concurrency.
+Use `--workers 4 --queue-capacity 8` to configure normal-request concurrency.
+By default, one additional worker and a separate queue handle verification requests
+whose timeout budget exceeds 120 seconds. Configure them with `--long-workers`
+and `--long-queue-capacity`; all workers preload Mathlib and consume memory.
 
 ## Usage
 
@@ -59,10 +62,29 @@ curl http://127.0.0.1:8000/verify_proof \
 
 Strict verification checks declaration names and types, preserves fixed definitions,
 and rejects `sorry`, unsafe dependencies and nonstandard axioms. The default and
-maximum timeout are 600 seconds including queue wait; set `timeout_seconds`
-to use a shorter budget. Unsupported AXLE options return HTTP 400.
+maximum timeout are 600 seconds including queue wait. Deployments can change these
+with `--verify-default-timeout` and `--verify-max-timeout`; requests can select a
+budget within that maximum. Unsupported AXLE options return HTTP 400.
 Fixed definitions also include their generated implementation dependencies, such as
 recursive helpers. These must match; theorem proof bodies may differ.
+
+For the two archived slow proofs, use a larger budget and dedicated capacity:
+
+```bash
+uv run lean-server --workers 2 --queue-capacity 8 \
+  --long-workers 2 --long-queue-capacity 2 \
+  --verify-default-timeout 1800 --verify-max-timeout 1800
+```
+
+Clients that explicitly send 600 seconds must also raise their request and HTTP
+client timeouts. The server does not extend an explicit client budget. Long jobs
+cannot occupy normal worker slots or their waiting queue; normal verification
+requests can select `timeout_seconds: 120` or less. See [worker scheduling](doc/worker-pool.md)
+for queue limits and deployment tradeoffs.
+
+Responses above the 8 MiB worker protocol limit return HTTP 503 with
+`error_type: "WorkerMessageTooLarge"` and `retryable: false`. A fully drained
+oversized response leaves the worker available for the next request.
 
 ## Local notebook
 

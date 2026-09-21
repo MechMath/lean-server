@@ -50,6 +50,22 @@ Lean parser/elaborator 错误使用 `compile_error`；worker 自身无法完成�
 
 可供测试使用的完整示例位于 [examples/](examples/)。
 
+## 响应大小边界
+
+每条响应上限为 8 MiB（8,388,608 字节），包括 UTF-8 JSON 和末尾换行；恰好达到上限
+的消息有效。超限时 Python 不再解析该条消息，返回 HTTP 503：
+
+```json
+{"error":"worker message exceeds 8388608 bytes","error_type":"WorkerMessageTooLarge","retryable":false}
+```
+
+读取按约 64 KiB 的块进行，最多保留 8 MiB 的未解析消息。发现超限后丢弃已保留内容，
+继续排空至换行，然后复用 worker；相同输入不应自动重试。排空不延长请求总 deadline，
+另有 2 秒和额外 64 MiB 的上限。若排空达到上限或遇到 EOF，消息边界无法恢复，仍返回
+不可重试的大小错误并回收 worker；若请求总 deadline 先到，则返回原有超时结果并回收。
+超限不是 Lean 证明拒绝，响应不带 `okay: false`。该上限约束 Python 传输层保留的原始
+字节，不是 Lean 生成诊断时的总内存上限。
+
 ## 版本与更新
 
 协议版本标识整个 worker 通信协议，不按功能分配。Python 与 Lean worker 必须配套更新；

@@ -3,6 +3,10 @@
 ## Status
 
 - Active follow-up is tracked in [GitHub issue #8](https://github.com/MechMath/lean-server/issues/8).
+- Resource-boundary follow-up: responses above 8 MiB now return a typed,
+  non-retryable `WorkerMessageTooLarge` error. Bounded draining through the
+  newline preserves a healthy worker; truncated or stalled output requires
+  replacement. See the [current byte and drain limits](../../../protocol/README.md#响应大小边界).
 - Updated on 2026-09-21: stdout now has an explicit 8 MiB limit; stderr is
   drained independently in chunks with a bounded 64 KiB tail. Real replay
   also found 197,802 identical diagnostics at the same location in one result
@@ -12,8 +16,8 @@
   See [219 validation](219-validation-2026-09-21.md) for the replay outcome.
 - Confirmed on 2026-09-18.
 - Affects the persistent `WorkerProcessBackend`.
-- Does not classify the submitted Lean program as a compile failure; the HTTP
-  request currently returns a retryable `503` and the worker is replaced.
+- Historically, this returned retryable HTTP `503` and replaced the worker;
+  it never classified the submitted Lean program as a compile failure.
 - Reproduced at full-dataset scale: 3,057 of 51,336 requests ended with this
   infrastructure failure in the latest local result for their UUID.
 

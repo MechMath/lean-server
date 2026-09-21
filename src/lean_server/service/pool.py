@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from lean_server.backend import CompilerBackend
-from lean_server.protocol import WorkerJobRequest, WorkerJobResult
+from lean_server.protocol import VerifyWorkerRequest, WorkerJobRequest, WorkerJobResult
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,10 @@ class PoolSnapshot:
     quarantined_inputs: int
     quarantine_hits: int
     quarantine_evictions: int
+    long_worker_count: int
+    long_active_workers: int
+    long_queue_depth: int
+    long_queue_capacity: int
 
 
 @dataclass(slots=True)
@@ -67,6 +71,7 @@ class _Job:
     future: asyncio.Future[WorkerJobResult]
     timeout_seconds: float
     deadline: float
+    long_running: bool = False
     started: bool = False
     execution_started_at: float | None = None
 
@@ -104,6 +109,9 @@ class CompilerPool:
         default_timeout_seconds: float = 30.0,
         startup_parallelism: int = 8,
         quarantine_capacity: int = 4096,
+        long_worker_count: int = 0,
+        long_queue_capacity: int = 8,
+        long_request_threshold_seconds: float = 120.0,
     ) -> None:
         if worker_count < 1:
             raise ValueError("worker_count must be at least 1")
@@ -115,8 +123,19 @@ class CompilerPool:
             raise ValueError("startup_parallelism must be at least 1")
         if quarantine_capacity < 1:
             raise ValueError("quarantine_capacity must be at least 1")
+        if long_worker_count < 0:
+            raise ValueError("long_worker_count must be nonnegative")
+        if long_queue_capacity < 1:
+            raise ValueError("long_queue_capacity must be at least 1")
+        if not math.isfinite(long_request_threshold_seconds) or long_request_threshold_seconds <= 0:
+            raise ValueError("long_request_threshold_seconds must be finite and positive")
         self._backend_factory = backend_factory
-        self._worker_count = worker_count
+        self._normal_worker_count = worker_count
+        self._long_worker_count = long_worker_count
+        self._worker_count = worker_count + long_worker_count
+        self._long_queue_capacity = long_queue_capacity
+        self._long_request_threshold_seconds = long_request_threshold_seconds
+        self._long_active_workers = 0
         self._queue_capacity = queue_capacity
         self._default_timeout_seconds = default_timeout_seconds
         self._startup_parallelism = startup_parallelism
@@ -143,12 +162,16 @@ class CompilerPool:
             worker_count=self._worker_count,
             ready_workers=self._ready_workers,
             active_workers=self._active_workers,
-            queue_depth=len(self._queue),
+            queue_depth=sum(not job.long_running for job in self._queue),
             queue_capacity=self._queue_capacity,
             replacements=self._replacements,
             quarantined_inputs=len(self._quarantine),
             quarantine_hits=self._quarantine_hits,
             quarantine_evictions=self._quarantine_evictions,
+            long_worker_count=self._long_worker_count,
+            long_active_workers=self._long_active_workers,
+            long_queue_depth=sum(job.long_running for job in self._queue),
+            long_queue_capacity=self._long_queue_capacity,
         )
 
     async def start(self) -> None:
@@ -198,11 +221,18 @@ class CompilerPool:
         fingerprint = _request_fingerprint(request)
         if error := self._quarantined_error(fingerprint):
             raise error
-        if len(self._queue) >= self._queue_capacity:
-            raise PoolOverloadedError("compiler queue is full")
+        long_running = (
+            self._long_worker_count > 0
+            and isinstance(request, VerifyWorkerRequest)
+            and timeout > self._long_request_threshold_seconds
+        )
+        capacity = self._long_queue_capacity if long_running else self._queue_capacity
+        if sum(job.long_running == long_running for job in self._queue) >= capacity:
+            lane = "long verification" if long_running else "compiler"
+            raise PoolOverloadedError(f"{lane} queue is full")
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        job = _Job(request, fingerprint, future, float(timeout), loop.time() + timeout)
+        job = _Job(request, fingerprint, future, float(timeout), loop.time() + timeout, long_running)
         self._queue.append(job)
         self._jobs_available.set()
         try:
@@ -237,11 +267,14 @@ class CompilerPool:
         self._state = "closed"
 
     async def _run_worker(self, index: int, backend: CompilerBackend) -> None:
+        long_running = index >= self._normal_worker_count
         while True:
             while True:
                 self._jobs_available.clear()
                 item = next(
-                    (job for job in self._queue if job.fingerprint not in self._in_flight),
+                    (job for job in self._queue
+                     if job.long_running == long_running
+                     and job.fingerprint not in self._in_flight),
                     None,
                 )
                 if item is not None:
@@ -258,6 +291,7 @@ class CompilerPool:
             item.execution_started_at = asyncio.get_running_loop().time()
             self._in_flight.add(item.fingerprint)
             self._active_workers += 1
+            self._long_active_workers += int(long_running)
             replace = False
             try:
                 result = await asyncio.wait_for(backend.compile(item.request), timeout=remaining)
@@ -280,7 +314,7 @@ class CompilerPool:
                         retryable=getattr(exc, "retryable", True),
                         error_type=getattr(exc, "error_type", None),
                     ))
-                replace = True
+                replace = getattr(exc, "replace_worker", True)
             else:
                 if result.status == "internal_error":
                     if not item.future.done():
@@ -290,6 +324,7 @@ class CompilerPool:
                     item.future.set_result(result)
             finally:
                 self._active_workers -= 1
+                self._long_active_workers -= int(long_running)
                 self._in_flight.remove(item.fingerprint)
                 self._jobs_available.set()
             if replace:

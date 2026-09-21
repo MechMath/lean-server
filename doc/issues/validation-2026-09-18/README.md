@@ -5,6 +5,9 @@ candidate files with remote AXLE and the local Lean server.
 
 ## Contents
 
+- [`resource-boundaries-2026-09-21.md`](resource-boundaries-2026-09-21.md):
+  bounded oversized-response draining, isolated long verification, configurable
+  budgets and reproducible slow-proof profiling.
 - [`219-validation-2026-09-21.md`](219-validation-2026-09-21.md): follow-up
   service fixes, remote tests, historical HTTP replay, and deployment status.
 - [`axle-failed-local-passed-review.md`](axle-failed-local-passed-review.md):
@@ -33,7 +36,7 @@ documents in this archive.
 | Topic | Status | GitHub issue |
 | --- | --- | --- |
 | Strict verification, NDJSON repair, pool hardening, and historical replay | Completed by PR #3; closes on merge | [#4](https://github.com/MechMath/lean-server/issues/4) |
-| `Nat.pow` panic, responses above 8 MiB, and very slow verification | Open | [#8](https://github.com/MechMath/lean-server/issues/8) |
+| `Nat.pow` panic, responses above 8 MiB, and very slow verification | Resource-boundary follow-up implemented; upstream panic diagnosis open | [#8](https://github.com/MechMath/lean-server/issues/8) |
 | Batch and worker-pool observability | Open | [#9](https://github.com/MechMath/lean-server/issues/9) |
 | AXLE compatibility and `/check` import semantics | Needs decision | [#11](https://github.com/MechMath/lean-server/issues/11) |
 

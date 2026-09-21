@@ -22,6 +22,9 @@ from lean_server.protocol import (
 
 MAX_WORKER_MESSAGE_BYTES = 8 * 1024 * 1024
 MAX_STDERR_TAIL_BYTES = 64 * 1024
+STREAM_CHUNK_BYTES = 64 * 1024
+MAX_OVERSIZE_DRAIN_BYTES = 64 * 1024 * 1024
+OVERSIZE_DRAIN_SECONDS = 2.0
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +50,17 @@ class WorkerPanicError(WorkerExitedError):
 
 class WorkerProtocolError(WorkerError):
     """The worker violated the versioned wire protocol."""
+
+
+class WorkerMessageTooLargeError(WorkerProtocolError):
+    """The response exceeded the byte limit; retrying unchanged is not useful."""
+
+    retryable = False
+    error_type = "WorkerMessageTooLarge"
+
+    def __init__(self, *, drained: bool) -> None:
+        super().__init__(f"worker message exceeds {MAX_WORKER_MESSAGE_BYTES} bytes")
+        self.replace_worker = not drained
 
 
 class WorkerProcessBackend:
@@ -100,7 +114,7 @@ class WorkerProcessBackend:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.cwd,
                 start_new_session=True,
-                limit=MAX_WORKER_MESSAGE_BYTES,
+                limit=STREAM_CHUNK_BYTES,
             )
         )
         try:
@@ -201,12 +215,7 @@ class WorkerProcessBackend:
         if process is None:
             raise WorkerError("worker has not been started")
         assert process.stdout is not None
-        try:
-            line = await process.stdout.readline()
-        except ValueError as exc:
-            raise WorkerProtocolError(
-                f"worker message exceeds {MAX_WORKER_MESSAGE_BYTES} bytes"
-            ) from exc
+        line = await self._read_line(process.stdout)
         if not line:
             await process.wait()
             if self._stderr_task is not None:
@@ -218,13 +227,48 @@ class WorkerProcessBackend:
                 raise WorkerPanicError(detail)
             raise WorkerExitedError(detail)
         try:
-            if len(line) > MAX_WORKER_MESSAGE_BYTES:
-                raise WorkerProtocolError(
-                    f"worker message exceeds {MAX_WORKER_MESSAGE_BYTES} bytes"
-                )
             return decode_worker_message(line.decode("utf-8"))
         except (UnicodeDecodeError, ProtocolError) as exc:
             raise WorkerProtocolError(str(exc)) from exc
+
+    async def _read_line(self, reader: asyncio.StreamReader) -> bytes:
+        # readuntil leaves over-limit data intact, unlike readline. Consume it
+        # in bounded chunks and discard oversized frames through their newline.
+        retained = bytearray()
+        size = 0
+        drain_deadline = None
+        while True:
+            complete = False
+            eof = False
+            try:
+                async with asyncio.timeout_at(drain_deadline):
+                    try:
+                        chunk = await reader.readuntil(b"\n")
+                        complete = True
+                    except asyncio.LimitOverrunError as exc:
+                        chunk = await reader.readexactly(exc.consumed)
+                    except asyncio.IncompleteReadError as exc:
+                        chunk = exc.partial
+                        eof = True
+            except TimeoutError as exc:
+                raise WorkerMessageTooLargeError(drained=False) from exc
+            size += len(chunk)
+            if size > MAX_WORKER_MESSAGE_BYTES:
+                retained.clear()
+                if complete or eof:
+                    raise WorkerMessageTooLargeError(drained=complete)
+                if size > MAX_WORKER_MESSAGE_BYTES + MAX_OVERSIZE_DRAIN_BYTES:
+                    raise WorkerMessageTooLargeError(drained=False)
+                if drain_deadline is None:
+                    drain_deadline = asyncio.get_running_loop().time() + OVERSIZE_DRAIN_SECONDS
+            else:
+                retained.extend(chunk)
+                if complete:
+                    return bytes(retained)
+                if eof:
+                    if retained:
+                        raise WorkerProtocolError("worker response ended before newline")
+                    return b""
 
     async def _drain_stderr(self) -> None:
         assert self._process is not None and self._process.stderr is not None

@@ -69,7 +69,10 @@ class VerifyProofRequest:
     timeout_seconds: float
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> VerifyProofRequest:
+    def from_dict(
+        cls, value: dict[str, Any], *, default_timeout_seconds: float = VERIFY_DEFAULT_TIMEOUT_SECONDS,
+        max_timeout_seconds: float = VERIFY_MAX_TIMEOUT_SECONDS,
+    ) -> VerifyProofRequest:
         unknown = sorted(set(value) - VERIFY_REQUEST_FIELDS)
         if unknown:
             raise RequestValidationError(
@@ -127,13 +130,13 @@ class VerifyProofRequest:
         if not ignore_imports:
             raise RequestValidationError("ignore_imports=false is not supported")
 
-        timeout = value.get("timeout_seconds", VERIFY_DEFAULT_TIMEOUT_SECONDS)
+        timeout = value.get("timeout_seconds", default_timeout_seconds)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
             raise RequestValidationError("timeout_seconds must be a number")
         timeout_seconds = float(timeout)
-        if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= VERIFY_MAX_TIMEOUT_SECONDS:
+        if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= max_timeout_seconds:
             raise RequestValidationError(
-                f"timeout_seconds must be between 0 and {VERIFY_MAX_TIMEOUT_SECONDS:g}"
+                f"timeout_seconds must be between 0 and {max_timeout_seconds:g}"
             )
 
         return cls(
@@ -151,8 +154,13 @@ class LeanHTTPServer(ThreadingHTTPServer):
         self,
         server_address: tuple[str, int],
         runtime: CompilerPoolRuntime,
+        *,
+        verify_default_timeout_seconds: float = VERIFY_DEFAULT_TIMEOUT_SECONDS,
+        verify_max_timeout_seconds: float = VERIFY_MAX_TIMEOUT_SECONDS,
     ) -> None:
         self.runtime = runtime
+        self.verify_default_timeout_seconds = verify_default_timeout_seconds
+        self.verify_max_timeout_seconds = verify_max_timeout_seconds
         super().__init__(server_address, LeanRequestHandler)
 
     def server_close(self) -> None:
@@ -269,10 +277,10 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
         worker_request = WorkerRequest(request_id=uuid.uuid4().hex, code=code)
         try:
             result = self.runtime.compile(worker_request, timeout_seconds=float(timeout))
-        except PoolOverloadedError:
+        except PoolOverloadedError as exc:
             self._json_response(
                 HTTPStatus.SERVICE_UNAVAILABLE,
-                {"error": "compiler queue is full", "retryable": True},
+                {"error": str(exc), "retryable": True},
             )
             return
         except PoolTimeoutError as exc:
@@ -311,7 +319,12 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
         if request_json is None:
             return
         try:
-            request = VerifyProofRequest.from_dict(request_json)
+            server = cast(LeanHTTPServer, self.server)
+            request = VerifyProofRequest.from_dict(
+                request_json,
+                default_timeout_seconds=server.verify_default_timeout_seconds,
+                max_timeout_seconds=server.verify_max_timeout_seconds,
+            )
         except RequestValidationError as exc:
             self._json_response(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
@@ -327,10 +340,10 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
             result = self.runtime.verify(
                 worker_request, timeout_seconds=request.timeout_seconds
             )
-        except PoolOverloadedError:
+        except PoolOverloadedError as exc:
             self._json_response(
                 HTTPStatus.SERVICE_UNAVAILABLE,
-                {"error": "compiler queue is full", "retryable": True},
+                {"error": str(exc), "retryable": True},
             )
             return
         except PoolTimeoutError as exc:
@@ -426,6 +439,9 @@ def create_runtime(
     worker_command: Sequence[str] | None = None,
     worker_startup_timeout_seconds: float = 180.0,
     worker_startup_parallelism: int = 8,
+    long_worker_count: int = 1,
+    long_queue_capacity: int = 8,
+    long_request_threshold_seconds: float = 120.0,
 ) -> CompilerPoolRuntime:
     command = DEFAULT_WORKER_COMMAND if worker_command is None else tuple(worker_command)
 
@@ -442,6 +458,9 @@ def create_runtime(
         queue_capacity=queue_capacity,
         default_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
         startup_parallelism=worker_startup_parallelism,
+        long_worker_count=long_worker_count,
+        long_queue_capacity=long_queue_capacity,
+        long_request_threshold_seconds=long_request_threshold_seconds,
     )
     return CompilerPoolRuntime(pool)
 
@@ -456,15 +475,33 @@ def create_server(
     worker_command: Sequence[str] | None = None,
     worker_startup_timeout_seconds: float = 180.0,
     worker_startup_parallelism: int = 8,
+    long_worker_count: int = 1,
+    long_queue_capacity: int = 8,
+    long_request_threshold_seconds: float = 120.0,
+    verify_default_timeout_seconds: float = VERIFY_DEFAULT_TIMEOUT_SECONDS,
+    verify_max_timeout_seconds: float = VERIFY_MAX_TIMEOUT_SECONDS,
 ) -> LeanHTTPServer:
+    if not (
+        math.isfinite(verify_default_timeout_seconds)
+        and math.isfinite(verify_max_timeout_seconds)
+        and 0 < verify_default_timeout_seconds <= verify_max_timeout_seconds
+    ):
+        raise ValueError("verification timeouts must be finite and 0 < default <= maximum")
     runtime = runtime or create_runtime(
         worker_count=worker_count,
         queue_capacity=queue_capacity,
         worker_command=worker_command,
         worker_startup_timeout_seconds=worker_startup_timeout_seconds,
         worker_startup_parallelism=worker_startup_parallelism,
+        long_worker_count=long_worker_count,
+        long_queue_capacity=long_queue_capacity,
+        long_request_threshold_seconds=long_request_threshold_seconds,
     )
-    server = LeanHTTPServer((host, port), runtime)
+    server = LeanHTTPServer(
+        (host, port), runtime,
+        verify_default_timeout_seconds=verify_default_timeout_seconds,
+        verify_max_timeout_seconds=verify_max_timeout_seconds,
+    )
     try:
         runtime.start()
     except BaseException:

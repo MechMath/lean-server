@@ -7,12 +7,13 @@ HTTP handler 不再直接启动 Lean。请求经过以下路径：
 ```text
 ThreadingHTTPServer
   -> CompilerPoolRuntime（独立 asyncio event loop）
-  -> CompilerPool（有界 FIFO queue）
+  -> CompilerPool（普通／长验证两个有界队列）
   -> CompilerBackend
       `- WorkerProcessBackend：默认的常驻 NDJSON worker
 ```
 
-默认配置为 2 个 worker slot、8 个等待位置。每个 slot 最多一个 in-flight 请求；等待队列
+默认配置为 2 个普通 worker slot、1 个额外的长验证 slot；两类各有 8 个等待位置。
+每个 slot 最多一个 in-flight 请求；对应等待队列
 已满时立即返回 HTTP 503：
 
 ```json
@@ -54,12 +55,47 @@ uv run lean-server \
 默认最多同时启动 8 个 worker，避免大量进程同时读取 Mathlib，也避免逐个串行启动。两个值可
 分别通过 `--worker-startup-timeout` 和 `--worker-startup-parallelism` 调整。
 
+## 长验证隔离与部署预算
+
+`--workers` 和 `--queue-capacity` 管理普通请求；`--long-workers`（默认 1）和
+`--long-queue-capacity`（默认 8）管理额外的长验证资源。两组 worker 与队列互不借用，
+长队列满不会挤占普通队列。所有 slot 共享输入指纹和 panic 隔离表，因此切换预算不会
+绕过 panic 隔离。长 worker 重建也不会借用普通 slot。
+
+验证请求的**原始总预算**超过 `--long-request-threshold`（默认 120 秒）时进入长队列；
+预算不超过阈值的验证和所有编译请求进入普通队列。这个规则不预测实际耗时，也不在执行
+中迁移任务。普通短验证应显式使用不超过 120 秒的预算；默认预算的验证进入长队列。
+相同输入正在长队列执行时，短预算的重复输入仍等待该输入，其他普通请求可跳过它。
+
+`--verify-default-timeout` 和 `--verify-max-timeout` 默认均为 600 秒，可由部署调整，
+必须有限且满足 `0 < default <= maximum`。编译检查的 120 秒上限独立保留。历史两个
+慢用例曾用时约 419 秒和 597 秒，建议部署为：
+
+```bash
+uv run lean-server --workers 2 --queue-capacity 8 \
+  --long-workers 2 --long-queue-capacity 2 \
+  --verify-default-timeout 1800 --verify-max-timeout 1800
+```
+
+该配置总共启动 4 个预加载 Mathlib 的进程。预留足够 CPU 和内存；调度隔离不等同于
+操作系统 CPU／内存配额，机器整体饱和仍会影响延迟。长任务预算包括排队；批处理应限制
+长任务并发为长 worker 数，避免在长队列中耗尽预算。HTTP 客户端、反向代理超时也应
+大于请求总预算（客户端至少额外留 15 秒）。显式的 600 秒客户端请求不会自动变成 1800 秒。
+
+嵌入使用时 `CompilerPool` 默认不增加长 worker；`create_runtime`／`create_server` 和
+CLI 默认增加 1 个。`--long-workers 0` 可恢复共享队列，但此配置不提供长短任务隔离。
+`long_worker_count`、`long_active_workers`、`long_queue_depth`、`long_queue_capacity`
+在 health/readiness 中显示长任务资源；`worker_count`、`ready_workers`、`active_workers`
+为两组总数，`queue_depth`／`queue_capacity` 为普通队列值。
+
 ## 生命周期和故障
 
 - 启动时以受限并行方式等待所有 backend ready，之后才开始监听 HTTP。
 - timeout、进程退出、EOF、非法协议、错误 request ID 和 `internal_error` 都会回收当前
   worker slot 并自动创建替代 worker。
 - Lean parser、elaborator 或类型错误返回 `compile_error`，不会回收 worker。
+- 超过 8 MiB 的响应返回不可重试的 `WorkerMessageTooLarge`，完整排空后复用 worker；
+  无法在有界时间／字节预算内排空时才回收。精确字节边界见 [协议说明](../protocol/README.md#响应大小边界)。
 - replacement 失败时按 50ms 到 2s 的上限指数退避，避免 respawn storm。
 - 服务关闭时取消 active 和 queued 请求，随后关闭所有 backend 和进程组。
 - 正在启动的 replacement 也由 pool 管理，取消 ready handshake 时会终止并回收进程。

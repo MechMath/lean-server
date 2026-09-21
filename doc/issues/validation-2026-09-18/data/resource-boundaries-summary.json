@@ -1,0 +1,61 @@
+{
+  "platform": "Linux-6.8.0-136-generic-x86_64-with-glibc2.35",
+  "python": "3.12.13",
+  "configuration": {
+    "normal_workers": 2,
+    "long_workers": 2,
+    "long_queue_capacity": 2,
+    "verify_default_timeout_seconds": 1800,
+    "verify_max_timeout_seconds": 1800,
+    "long_request_threshold_seconds": 120
+  },
+  "results": [
+    {
+      "http_status": 200,
+      "elapsed_seconds": 696.248860178981,
+      "uuid": "Goedel-Pset-1539351",
+      "okay": true,
+      "timings": {
+        "total_ms": 696245.2701870352,
+        "formal_statement_ms": 257.646971,
+        "declarations_ms": 7.08169,
+        "candidate_ms": 695978.499593
+      },
+      "error_type": null,
+      "error": null,
+      "candidate_sha256": "fc1ee28c435e633894a8662bea48af7a27f34e3b1409dbf112d9cd113cf7a945"
+    },
+    {
+      "http_status": 200,
+      "elapsed_seconds": 858.0941279972903,
+      "uuid": "Goedel-Pset-101720",
+      "okay": true,
+      "timings": {
+        "total_ms": 858088.4896726348,
+        "formal_statement_ms": 267.168966,
+        "declarations_ms": 2.526485,
+        "candidate_ms": 857816.142542
+      },
+      "error_type": null,
+      "error": null,
+      "candidate_sha256": "85554e8036c443d72e445191428d71577c2ba236c29d7409132096f3c3dc00b6"
+    }
+  ],
+  "normal_probes": {
+    "count": 426,
+    "all_passed": true,
+    "while_both_long_workers_busy": 345,
+    "median_seconds": 0.016589019680395722,
+    "p95_seconds": 0.017858266830444336,
+    "max_seconds": 0.24773529497906566
+  },
+  "replacements": 0,
+  "date": "2026-09-21",
+  "lean_version": "4.30.0",
+  "validation_scope": "Local staging, not a production rollout; full regression suite also ran during replay.",
+  "automated_tests": {
+    "command": "PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v",
+    "passed": 132,
+    "elapsed_seconds": 107.489
+  }
+}

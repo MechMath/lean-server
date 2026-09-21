@@ -12,7 +12,10 @@ from lean_server.workers import (
     WorkerProtocolError,
     WorkerStartupError,
 )
-from lean_server.workers.process import MAX_STDERR_TAIL_BYTES, WorkerPanicError
+from lean_server.workers.process import (
+    MAX_STDERR_TAIL_BYTES, MAX_WORKER_MESSAGE_BYTES,
+    WorkerMessageTooLargeError, WorkerPanicError,
+)
 
 
 FAKE_WORKER = Path(__file__).parents[1] / "fixtures" / "fake_worker.py"
@@ -85,6 +88,41 @@ class WorkerProcessTests(unittest.IsolatedAsyncioTestCase):
         ):
             await worker.start()
         await worker.close()
+
+    async def test_exact_wire_size_boundaries_and_reuse(self) -> None:
+        pid = self.worker.pid
+        for verify in (False, True):
+            for delta in (-1, 0, 1, 2 * MAX_WORKER_MESSAGE_BYTES):
+                with self.subTest(verify=verify, delta=delta):
+                    content = f"__RESPONSE_BYTES__:{MAX_WORKER_MESSAGE_BYTES + delta}"
+                    request = (VerifyWorkerRequest("sized", "statement", content) if verify
+                               else WorkerRequest("sized", content))
+                    if delta > 0:
+                        with self.assertRaises(WorkerMessageTooLargeError) as caught:
+                            await asyncio.wait_for(self.worker.compile(request), timeout=5)
+                        self.assertFalse(caught.exception.retryable)
+                        self.assertFalse(caught.exception.replace_worker)
+                    else:
+                        result = await asyncio.wait_for(self.worker.compile(request), timeout=5)
+                        self.assertEqual(result.status, "ok")
+                    following = await self.worker.compile(WorkerRequest("following", "healthy"))
+                    self.assertEqual(following.request_id, "following")
+                    self.assertEqual(self.worker.pid, pid)
+
+    async def test_unterminated_oversize_frames_have_bounded_cleanup(self) -> None:
+        for mode in ("EOF", "STALL", "FLOOD"):
+            with self.subTest(mode=mode):
+                worker = WorkerProcessBackend([sys.executable, str(FAKE_WORKER)])
+                await worker.start()
+                try:
+                    with self.assertRaises(WorkerMessageTooLargeError) as caught:
+                        await asyncio.wait_for(worker.compile(
+                            WorkerRequest("unterminated", f"__OVERSIZE_{mode}__")
+                        ), timeout=5)
+                    self.assertFalse(caught.exception.retryable)
+                    self.assertTrue(caught.exception.replace_worker)
+                finally:
+                    await worker.close()
 
     async def test_rejects_old_worker_at_startup(self) -> None:
         worker = WorkerProcessBackend([

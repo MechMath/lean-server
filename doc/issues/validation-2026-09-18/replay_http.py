@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
+import math
 from pathlib import Path
 import time
 from urllib.error import HTTPError
@@ -31,9 +32,10 @@ def main():
     args = parser.parse_args()
     if args.concurrency < 1:
         parser.error('concurrency must be positive')
-    maximum = 120 if args.mode == 'check-errors' else 600
-    if not 0 < args.timeout_seconds <= maximum:
-        parser.error(f'timeout-seconds must be positive and at most {maximum}')
+    if not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
+        parser.error('timeout-seconds must be finite and positive')
+    if args.mode == 'check-errors' and args.timeout_seconds > 120:
+        parser.error('compilation timeout-seconds must be at most 120')
     rows = [json.loads(line) for line in args.archive.open()]
     excluded = []
     if args.exclude_formal_errors:
