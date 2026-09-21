@@ -2,6 +2,12 @@
 
 ## Status
 
+- Local follow-up: the pool now quarantines exact inputs after this typed panic
+  and serializes concurrent identical inputs, preventing repeated replacement
+  while the fingerprint is retained. Healthy inputs can use other workers during
+  replacement. The bounded, process-local quarantine and its restart/eviction
+  limits are documented in [worker-pool.md](../../worker-pool.md#崩溃输入隔离).
+  This does not repair the underlying panic or establish a minimized reproducer.
 - Mitigated on 2026-09-21: this known panic returns HTTP 503 with
   `error_type: "LeanPanic"` and `retryable: false`; the pool replaces the crashed
   worker and remains usable. The underlying Lean 4.30 panic is not repaired.
@@ -20,6 +26,22 @@
   "retryable": true
 }
 ```
+
+## Local quarantine validation — 2026-09-21
+
+- Full Python/Lean/HTTP suite: **119 tests passed in 104.283 seconds** outside
+  the local sandbox. The sandbox prevents the HTTP listener from binding and
+  the initial sandboxed archive check exceeded its 30-second budget.
+- Replayed the unchanged archived candidate through the real persistent worker
+  with two pool slots, three concurrent identical requests and a 120-second
+  total budget outside the sandbox. One request produced `LeanPanic`; the other
+  two were quarantined without execution. All three errors were non-retryable.
+- A following `theorem healthy : True := by trivial` compiled successfully.
+  Final pool state: two ready workers, zero active/queued requests, exactly one
+  replacement, one quarantined input and two quarantine hits.
+- Subprocess regressions also cover cancellation during process creation and
+  panic classification when the worker exits before the response is read.
+  These are local validation results; they do not record a production rollout.
 
 Affected record:
 

@@ -62,7 +62,7 @@ class Worker:
         assert self.process.stdin is not None
         assert self.process.stdout is not None
         request: dict[str, Any] = {
-            "protocol_version": 1,
+            "protocol_version": 2,
             "type": "compile",
             "request_id": request_id,
             "code": code,

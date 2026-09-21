@@ -12,7 +12,7 @@
 实现：
 
 ```text
-POST /api/v1/verify_proof
+POST /verify_proof
 ```
 
 首版接受以下字段：

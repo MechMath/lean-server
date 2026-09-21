@@ -5,8 +5,7 @@ namespace LeanServerWorker
 
 open Lean
 
-def protocolVersion : Nat := 1
-def verifyProtocolVersion : Nat := 2
+def protocolVersion : Nat := 2
 
 structure CompileRequest where
   requestId : String
@@ -37,24 +36,24 @@ structure Diagnostic where
 def parseRequest (line : String) : Except String Request := do
   let json ← Json.parse line
   let version ← (json.getObjVal? "protocol_version" >>= Json.getNat?)
+  if version != protocolVersion then
+    throw s!"unsupported protocol_version {version}"
   let messageType ← json.getObjVal? "type" >>= Json.getStr?
   let requestId ← json.getObjVal? "request_id" >>= Json.getStr?
   if requestId.isEmpty then
     throw "request_id must be non-empty"
-  match version, messageType with
-  | 1, "compile" =>
+  match messageType with
+  | "compile" =>
     let code ← json.getObjVal? "code" >>= Json.getStr?
     return .compile { requestId, code }
-  | 2, "verify" =>
+  | "verify" =>
     let formalStatement ← json.getObjVal? "formal_statement" >>= Json.getStr?
     let content ← json.getObjVal? "content" >>= Json.getStr?
     let useDefEq ← match json.getObjVal? "use_def_eq" with
       | .ok value => value.getBool?
       | .error _ => pure true
     return .verify { requestId, formalStatement, content, useDefEq }
-  | 1, _ => throw "protocol v1 type must be compile"
-  | 2, _ => throw "protocol v2 type must be verify"
-  | _, _ => throw s!"unsupported protocol_version {version}"
+  | _ => throw s!"unsupported request type {messageType}"
 
 private def positionToJson : Option Position → Json
   | some pos => Json.mkObj [("line", toJson pos.line), ("column", toJson pos.column)]
@@ -97,7 +96,7 @@ def verifyResultJson (requestId : String) (status : ResultStatus) (compileMs : F
     (formalStatementMs candidateMs declarationsMs : Float)
     (warnings errors : Array Diagnostic) (toolErrors failedDeclarations : Array String) : Json :=
   Json.mkObj [
-    ("protocol_version", toJson verifyProtocolVersion),
+    ("protocol_version", toJson protocolVersion),
     ("type", toJson "verify_result"),
     ("request_id", toJson requestId),
     ("status", toJson status.toString),

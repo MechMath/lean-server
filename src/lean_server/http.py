@@ -228,10 +228,10 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
         self._json_response(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/api/v1/check":
+        if self.path == "/check":
             self._handle_check()
             return
-        if self.path == "/api/v1/verify_proof":
+        if self.path == "/verify_proof":
             self._handle_verify_proof()
             return
         self._json_response(HTTPStatus.NOT_FOUND, {"error": "not found"})

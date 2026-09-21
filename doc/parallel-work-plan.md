@@ -2,15 +2,16 @@
 
 ## 固定边界
 
-两条任务通过 `protocol/v1` 中的 NDJSON 协议通信。开始并行开发后，以下文件视为冻结：
+两条任务通过 `protocol/` 中的统一 NDJSON 协议通信。以下文件是共同维护的接口边界：
 
-- `protocol/v1/**`
+- `protocol/**`
 - `src/lean_server/protocol.py`
 - `src/lean_server/backend.py`
 - `tests/contract/**`
 
-如发现协议不足，先在主分支协调修改；不要在两个任务分支分别修改协议。需要不兼容修改
-时新增 v2，不原地改变 v1。
+协议修改需要同步更新 Lean worker、Python decoder、schema 和契约测试。所有消息使用
+同一个 `protocol_version`，通过 `type` 区分编译和证明验证，不按功能拆分版本。
+Python 与 Lean worker 必须配套更新；部署要求见 `protocol/README.md`。
 
 ## 任务 A：优化 Lean 部分
 
@@ -26,8 +27,8 @@
 ### 交付内容
 
 1. 实现 `lean-server-worker` 常驻 executable。
-2. 启动时加载 Lean 4.30.0 和 Mathlib 4.30.0，完成后输出 v1 `ready`。
-3. 逐行读取 v1 `compile`，逐行输出对应 `result`。
+2. 启动时加载 Lean 4.30.0 和 Mathlib 4.30.0，完成后输出 `ready`。
+3. 逐行读取 `compile`，逐行输出对应 `result`。
 4. 从同一个干净 base environment 编译每次请求，不能让声明、option、attribute 或 notation
    泄漏到后续请求。
 5. 使用 Lean 自己的结构化 message 数据生成 warning/error 和源码位置。
@@ -41,7 +42,7 @@
 - parser、elaborator 和类型错误返回 `compile_error`，worker 不退出。
 - warning 不导致失败。
 - 连续请求无法访问前一请求声明。
-- worker 输出通过 `tests/contract` 中的 v1 decoder。
+- worker 输出通过 `tests/contract` 中的 worker decoder。
 
 ## 任务 B：优化并行与接口调度
 
@@ -52,7 +53,7 @@
 - `src/lean_server/http.py`、`src/lean_server/__main__.py`
 - `tests/service/**`
 
-不修改 `lean/**`。开发和 CI 使用一个实现 v1 的 fake worker，因此不依赖任务 A 是否已经
+不修改 `lean/**`。开发和 CI 使用一个实现统一协议的 fake worker，因此不依赖任务 A 是否已经
 完成。
 
 ### 交付内容
@@ -64,7 +65,7 @@
 5. wall-clock timeout 后杀死整个 worker 进程组并补充容量。
 6. EOF、非法 JSON、错误 request ID 触发 worker replacement；Lean 编译错误不重试。
 7. 实现 graceful shutdown，关闭监听后排空或取消任务并回收进程。
-8. 保持当前 `/api/v1/check` 请求和基础响应字段兼容。
+8. 编译入口使用 `/check`，严格验证入口使用 `/verify_proof`，保持请求和响应格式。
 
 ### 验收条件
 

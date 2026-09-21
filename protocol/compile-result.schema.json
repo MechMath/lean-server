@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://lean-server.local/protocol/v2/result.schema.json",
+  "$id": "https://lean-server.local/protocol/compile-result.schema.json",
   "$defs": {
     "position": {
       "type": ["object", "null"],
@@ -32,26 +32,16 @@
     "request_id",
     "status",
     "compile_ms",
-    "formal_statement_ms",
-    "candidate_ms",
-    "declarations_ms",
     "warnings",
-    "errors",
-    "tool_errors",
-    "failed_declarations"
+    "errors"
   ],
   "properties": {
     "protocol_version": {"const": 2},
-    "type": {"const": "verify_result"},
+    "type": {"const": "result"},
     "request_id": {"type": "string", "minLength": 1},
     "status": {"enum": ["ok", "compile_error", "internal_error"]},
     "compile_ms": {"type": "number", "minimum": 0},
-    "formal_statement_ms": {"type": "number", "minimum": 0},
-    "candidate_ms": {"type": "number", "minimum": 0},
-    "declarations_ms": {"type": "number", "minimum": 0},
     "warnings": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
-    "errors": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
-    "tool_errors": {"type": "array", "items": {"type": "string"}},
-    "failed_declarations": {"type": "array", "items": {"type": "string"}}
+    "errors": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
   }
 }

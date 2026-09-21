@@ -107,7 +107,7 @@ class CompilerPoolTests(unittest.IsolatedAsyncioTestCase):
         pool = CompilerPool(tracker.factory, worker_count=2, queue_capacity=8)
         await pool.start()
         tasks = [
-            asyncio.create_task(pool.compile(WorkerRequest(f"req-{index}", "code")))
+            asyncio.create_task(pool.compile(WorkerRequest(f"req-{index}", f"code-{index}")))
             for index in range(6)
         ]
         while pool.snapshot.active_workers < 2:

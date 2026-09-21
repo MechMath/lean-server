@@ -42,6 +42,7 @@ class WorkerPanicError(WorkerExitedError):
 
     retryable = False
     error_type = "LeanPanic"
+    quarantine_input = True
 
 
 class WorkerProtocolError(WorkerError):
@@ -91,8 +92,8 @@ class WorkerProcessBackend:
             if self._process.returncode is None:
                 return
             raise WorkerStartupError("worker backend cannot be restarted")
-        try:
-            self._process = await asyncio.create_subprocess_exec(
+        spawn = asyncio.create_task(
+            asyncio.create_subprocess_exec(
                 *self.command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -101,6 +102,19 @@ class WorkerProcessBackend:
                 start_new_session=True,
                 limit=MAX_WORKER_MESSAGE_BYTES,
             )
+        )
+        try:
+            # Preserve ownership if shutdown arrives while the OS process is
+            # being created, before create_subprocess_exec returns its handle.
+            self._process = await asyncio.shield(spawn)
+        except asyncio.CancelledError:
+            try:
+                self._process = await spawn
+            except Exception:
+                logger.exception("cancelled worker spawn failed")
+            else:
+                await self.close()
+            raise
         except OSError as exc:
             raise WorkerStartupError(f"unable to start worker: {exc}") from exc
 
@@ -181,7 +195,11 @@ class WorkerProcessBackend:
         return process
 
     async def _read_message(self) -> WorkerReady | WorkerJobResult:
-        process = self._require_running()
+        # A fast panic may exit before we start reading. Drain stdout/stderr
+        # before classifying EOF so it still receives the typed panic outcome.
+        process = self._process
+        if process is None:
+            raise WorkerError("worker has not been started")
         assert process.stdout is not None
         try:
             line = await process.stdout.readline()

@@ -9,7 +9,7 @@ from tests.lean.schema_assertions import assert_matches_schema
 from tests.lean.worker_harness import PROJECT_ROOT, Worker
 
 
-PROTOCOL = PROJECT_ROOT / "protocol" / "v1"
+PROTOCOL = PROJECT_ROOT / "protocol"
 EXAMPLES = PROTOCOL / "examples"
 
 
@@ -42,11 +42,11 @@ class LeanWorkerTests(unittest.TestCase):
             self.assertEqual(warning.status, "ok")
             self.assertTrue(any("unused variable" in item.message for item in warning.warnings))
 
-    def test_real_output_matches_frozen_schema_and_golden_files(self) -> None:
+    def test_real_output_matches_schema_and_golden_files(self) -> None:
         ready_schema = read_json(PROTOCOL / "ready.schema.json")
-        result_schema = read_json(PROTOCOL / "result.schema.json")
+        result_schema = read_json(PROTOCOL / "compile-result.schema.json")
         ready_golden = read_json(EXAMPLES / "ready.json")
-        success_golden = read_json(EXAMPLES / "success.json")
+        success_golden = read_json(EXAMPLES / "compile-success.json")
 
         with Worker() as worker:
             self.assertEqual(worker.ready_json, ready_golden)
@@ -81,6 +81,24 @@ class LeanWorkerTests(unittest.TestCase):
 
             recovered = worker.compile("recovered", "def answer : Nat := 42")
             self.assertEqual(recovered.status, "ok")
+
+    def test_rejects_non_v2_requests_and_continues(self) -> None:
+        with Worker() as worker:
+            assert worker.process.stdin is not None
+            for version, message_type in ((1, "compile"), (3, "compile"), (1, "verify")):
+                request = {
+                    "protocol_version": version,
+                    "type": message_type,
+                    "request_id": "unsupported",
+                    "code": "example : True := True.intro",
+                    "formal_statement": "theorem t : True := by sorry",
+                    "content": "theorem t : True := True.intro",
+                }
+                worker.process.stdin.write(json.dumps(request) + "\n")
+                worker.process.stdin.flush()
+                # Unsupported requests must not emit a result or terminate the worker.
+                result = worker.compile("following", "example : True := True.intro")
+                self.assertEqual(result.status, "ok")
 
     def test_historical_repeated_diagnostic_does_not_expand_transport(self) -> None:
         archive = PROJECT_ROOT / "doc/issues/validation-2026-09-18/data/disagreements.jsonl"

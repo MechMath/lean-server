@@ -1,0 +1,1 @@
+{"protocol_version":2,"type":"verify","request_id":"verify-1","formal_statement":"theorem t : True := by sorry","content":"theorem t : True := True.intro","use_def_eq":true}

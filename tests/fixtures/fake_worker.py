@@ -13,16 +13,18 @@ def emit(value: dict) -> None:
 if len(sys.argv) == 3 and sys.argv[1] == "--startup-delay":
     time.sleep(float(sys.argv[2]))
 
-emit({"protocol_version": 1, "type": "ready", "lean_version": "4.30.0"})
+emit({"protocol_version": 2, "type": "ready", "lean_version": "4.30.0"})
 
 for line in sys.stdin:
     request = json.loads(line)
+    if request.get("protocol_version") != 2:
+        raise ValueError("unsupported protocol_version")
     request_id = request["request_id"]
     if request.get("code", request.get("content")) == "__NAT_POW_PANIC__":
         sys.stderr.write("INTERNAL PANIC: Nat.pow exponent is too big\n")
         sys.stderr.flush()
         raise SystemExit(1)
-    if request.get("protocol_version") == 2 and request.get("type") == "verify":
+    if request.get("type") == "verify":
         content = request["content"]
         if content == "__CRASH__":
             sys.stderr.write("intentional fake worker crash\n")
@@ -121,7 +123,7 @@ for line in sys.stdin:
     if code == "__ERROR__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "compile_error",
@@ -142,7 +144,7 @@ for line in sys.stdin:
     if code == "__INTERNAL_ERROR__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "internal_error",
@@ -163,7 +165,7 @@ for line in sys.stdin:
     if code == "__WARNING__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "ok",
@@ -184,7 +186,7 @@ for line in sys.stdin:
     if code == "__SORRY__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "ok",
@@ -204,7 +206,7 @@ for line in sys.stdin:
         continue
     emit(
         {
-            "protocol_version": 1,
+            "protocol_version": 2,
             "type": "result",
             "request_id": request_id,
             "status": "ok",

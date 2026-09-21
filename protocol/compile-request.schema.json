@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://lean-server.local/protocol/v1/request.schema.json",
+  "$id": "https://lean-server.local/protocol/compile-request.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["protocol_version", "type", "request_id", "code"],
   "properties": {
-    "protocol_version": {"const": 1},
+    "protocol_version": {"const": 2},
     "type": {"const": "compile"},
     "request_id": {"type": "string", "minLength": 1},
     "code": {"type": "string"}

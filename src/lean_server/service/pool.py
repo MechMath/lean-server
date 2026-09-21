@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import math
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -36,7 +38,7 @@ class PoolTimeoutError(PoolError):
 
 
 class PoolWorkerError(PoolError):
-    """A worker failed and its process slot is being replaced."""
+    """A worker failed, or the input was quarantined after an earlier panic."""
 
     def __init__(self, message: str, *, retryable: bool = True, error_type: str | None = None):
         super().__init__(message)
@@ -53,11 +55,15 @@ class PoolSnapshot:
     queue_depth: int
     queue_capacity: int
     replacements: int
+    quarantined_inputs: int
+    quarantine_hits: int
+    quarantine_evictions: int
 
 
 @dataclass(slots=True)
 class _Job:
     request: WorkerJobRequest
+    fingerprint: bytes
     future: asyncio.Future[WorkerJobResult]
     timeout_seconds: float
     deadline: float
@@ -77,8 +83,17 @@ def _timeout_error(job: _Job) -> PoolTimeoutError:
     )
 
 
+def _request_fingerprint(request: WorkerJobRequest) -> bytes:
+    payload = request.to_dict()
+    # IDs identify attempts, not input. Include operation, protocol, and every
+    # compiler option; HTTP deadlines and allow_sorry do not affect execution.
+    del payload["request_id"]
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).digest()
+
+
 class CompilerPool:
-    """Fixed-size compiler pool with a bounded FIFO pending queue."""
+    """Bounded pool dispatching the earliest job whose input is not in flight."""
 
     def __init__(
         self,
@@ -88,6 +103,7 @@ class CompilerPool:
         queue_capacity: int,
         default_timeout_seconds: float = 30.0,
         startup_parallelism: int = 8,
+        quarantine_capacity: int = 4096,
     ) -> None:
         if worker_count < 1:
             raise ValueError("worker_count must be at least 1")
@@ -97,11 +113,20 @@ class CompilerPool:
             raise ValueError("default_timeout_seconds must be finite and positive")
         if startup_parallelism < 1:
             raise ValueError("startup_parallelism must be at least 1")
+        if quarantine_capacity < 1:
+            raise ValueError("quarantine_capacity must be at least 1")
         self._backend_factory = backend_factory
         self._worker_count = worker_count
         self._queue_capacity = queue_capacity
         self._default_timeout_seconds = default_timeout_seconds
         self._startup_parallelism = startup_parallelism
+        self._quarantine_capacity = quarantine_capacity
+        # Pool instances own a fixed backend environment. Restarting the service
+        # (including a toolchain upgrade) starts a fresh quarantine namespace.
+        self._quarantine: OrderedDict[bytes, str] = OrderedDict()
+        self._quarantine_hits = 0
+        self._quarantine_evictions = 0
+        self._in_flight: set[bytes] = set()
         self._queue: deque[_Job] = deque()
         self._jobs_available = asyncio.Event()
         self._backends: list[CompilerBackend] = []
@@ -121,6 +146,9 @@ class CompilerPool:
             queue_depth=len(self._queue),
             queue_capacity=self._queue_capacity,
             replacements=self._replacements,
+            quarantined_inputs=len(self._quarantine),
+            quarantine_hits=self._quarantine_hits,
+            quarantine_evictions=self._quarantine_evictions,
         )
 
     async def start(self) -> None:
@@ -167,11 +195,14 @@ class CompilerPool:
         timeout = self._default_timeout_seconds if timeout_seconds is None else timeout_seconds
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout_seconds must be finite and positive")
+        fingerprint = _request_fingerprint(request)
+        if error := self._quarantined_error(fingerprint):
+            raise error
         if len(self._queue) >= self._queue_capacity:
             raise PoolOverloadedError("compiler queue is full")
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        job = _Job(request, future, float(timeout), loop.time() + timeout)
+        job = _Job(request, fingerprint, future, float(timeout), loop.time() + timeout)
         self._queue.append(job)
         self._jobs_available.set()
         try:
@@ -207,10 +238,16 @@ class CompilerPool:
 
     async def _run_worker(self, index: int, backend: CompilerBackend) -> None:
         while True:
-            while not self._queue:
+            while True:
                 self._jobs_available.clear()
+                item = next(
+                    (job for job in self._queue if job.fingerprint not in self._in_flight),
+                    None,
+                )
+                if item is not None:
+                    self._queue.remove(item)
+                    break
                 await self._jobs_available.wait()
-            item = self._queue.popleft()
             item.started = True
             if item.future.done():
                 continue
@@ -219,6 +256,7 @@ class CompilerPool:
                 item.future.set_exception(_timeout_error(item))
                 continue
             item.execution_started_at = asyncio.get_running_loop().time()
+            self._in_flight.add(item.fingerprint)
             self._active_workers += 1
             replace = False
             try:
@@ -232,6 +270,10 @@ class CompilerPool:
                     item.future.set_exception(PoolClosedError("pool is closing"))
                 raise
             except Exception as exc:
+                # Only an explicit backend panic signal poisons input. Ordinary
+                # timeouts, protocol failures and transient exits stay retryable.
+                if getattr(exc, "quarantine_input", False):
+                    self._quarantine_input(item.fingerprint, exc.error_type)
                 if not item.future.done():
                     item.future.set_exception(PoolWorkerError(
                         str(exc),
@@ -248,11 +290,39 @@ class CompilerPool:
                     item.future.set_result(result)
             finally:
                 self._active_workers -= 1
+                self._in_flight.remove(item.fingerprint)
+                self._jobs_available.set()
             if replace:
                 replacement = await self._replace_backend(index, backend)
                 if replacement is None:
                     return
                 backend = replacement
+
+    def _quarantined_error(self, fingerprint: bytes) -> PoolWorkerError | None:
+        error_type = self._quarantine.get(fingerprint)
+        if error_type is None:
+            return None
+        self._quarantine.move_to_end(fingerprint)
+        self._quarantine_hits += 1
+        return PoolWorkerError(
+            "worker previously panicked for this input; input is quarantined",
+            retryable=False,
+            error_type=error_type,
+        )
+
+    def _quarantine_input(self, fingerprint: bytes, error_type: str) -> None:
+        self._quarantine[fingerprint] = error_type
+        self._quarantine.move_to_end(fingerprint)
+        if len(self._quarantine) > self._quarantine_capacity:
+            self._quarantine.popitem(last=False)
+            self._quarantine_evictions += 1
+        logger.warning("quarantined worker input %s (%s)", fingerprint.hex(), error_type)
+        # Reject waiting duplicates now, even if the only worker is restarting.
+        for job in tuple(self._queue):
+            if job.fingerprint == fingerprint:
+                self._queue.remove(job)
+                if not job.future.done():
+                    job.future.set_exception(self._quarantined_error(fingerprint))
 
     async def _close_backend(self, backend: CompilerBackend) -> None:
         try:

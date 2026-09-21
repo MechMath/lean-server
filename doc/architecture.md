@@ -2,12 +2,12 @@
 
 ## 1. 系统边界
 
-服务只监听 loopback 或可信内网，调用方主要是本机的 `lean-eval-toolkit`。初始版本只提供：
+服务只监听 loopback 或可信内网，调用方主要是本机的 `lean-eval-toolkit`。当前 HTTP 接口为：
 
 - `GET /healthz`
 - `GET /readyz`
-- `GET /api/v1/environments`
-- `POST /api/v1/verify_proof`
+- `POST /check`
+- `POST /verify_proof`
 
 第一阶段只注册 `lean-4.30.0`，其内容是固定版本的 Lean、对应 Mathlib、Lean REPL 和本项目的验证 metaprogram。运行时请求不能改变依赖集合。
 
@@ -16,7 +16,7 @@
 ```text
 lean-eval-toolkit
         |
-        | POST /api/v1/verify_proof
+        | POST /verify_proof
         v
 +------------------------------+
 | Python API / compatibility   |

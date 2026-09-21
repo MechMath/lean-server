@@ -64,10 +64,10 @@ def main():
 
     def request(row):
         if args.mode == 'check-errors':
-            path = '/api/v1/check'
+            path = '/check'
             payload = {'code': row['candidate'], 'allow_sorry': False, 'timeout_seconds': args.timeout_seconds}
         else:
-            path = '/api/v1/verify_proof'
+            path = '/verify_proof'
             payload = {'formal_statement': row['formal_statement'], 'content': row['candidate'],
                        'environment': 'lean-4.30.0', 'timeout_seconds': args.timeout_seconds, 'use_def_eq': True}
         req = Request(args.base_url.rstrip('/')+path, data=json.dumps(payload).encode(),

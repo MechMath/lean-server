@@ -5,6 +5,8 @@ import subprocess
 import unittest
 from typing import Any
 
+from lean_server.protocol import VerifyWorkerResult, decode_worker_message
+from tests.lean.schema_assertions import assert_matches_schema
 from tests.lean.worker_harness import PROJECT_ROOT, Worker
 
 
@@ -31,6 +33,9 @@ class LeanVerifierTests(unittest.TestCase):
         )
         cls.worker = Worker()
         cls.request_index = 0
+        cls.result_schema = json.loads(
+            (PROJECT_ROOT / "protocol" / "verify-result.schema.json").read_text()
+        )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -58,7 +63,10 @@ class LeanVerifierTests(unittest.TestCase):
         assert process.stdout is not None
         process.stdin.write(json.dumps(request, separators=(",", ":")) + "\n")
         process.stdin.flush()
-        response = json.loads(process.stdout.readline())
+        line = process.stdout.readline()
+        response = json.loads(line)
+        assert_matches_schema(response, self.result_schema)
+        self.assertIsInstance(decode_worker_message(line), VerifyWorkerResult)
 
         self.assertEqual(response["protocol_version"], 2)
         self.assertEqual(response["type"], "verify_result")
@@ -104,6 +112,15 @@ import Mathlib
 theorem target (p : Prop) (h : p) : p := h
 """,
         )
+
+    def test_compile_and_verify_share_one_protocol_and_process(self) -> None:
+        self.assertEqual(self.worker.ready_json["protocol_version"], 2)
+        before, _ = self.worker.compile_wire("before-verify", "def hidden : Nat := 42")
+        verified = self.assert_verified(TRIVIAL_FORMAL, "theorem target : True := True.intro")
+        after, result = self.worker.compile_wire("after-verify", "#check target\n#check hidden")
+        self.assertEqual(result.status, "compile_error")
+        self.assertEqual(before["protocol_version"], verified["protocol_version"])
+        self.assertEqual(after["protocol_version"], verified["protocol_version"])
 
     def test_accepts_allowed_standard_axioms(self) -> None:
         formal_statement = """\

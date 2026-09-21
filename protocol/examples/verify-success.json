@@ -1,0 +1,1 @@
+{"protocol_version":2,"type":"verify_result","request_id":"verify-1","status":"ok","compile_ms":4.0,"formal_statement_ms":1.0,"candidate_ms":2.0,"declarations_ms":1.0,"warnings":[],"errors":[],"tool_errors":[],"failed_declarations":[]}

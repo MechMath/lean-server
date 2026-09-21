@@ -5,7 +5,7 @@ from typing import Any
 
 
 def assert_matches_schema(value: Any, schema: Mapping[str, Any]) -> None:
-    """Validate the JSON Schema features used by the frozen worker protocol."""
+    """Validate the JSON Schema features used by the worker protocol."""
 
     def resolve(reference: str) -> Mapping[str, Any]:
         if not reference.startswith("#/"):
@@ -33,6 +33,7 @@ def assert_matches_schema(value: Any, schema: Mapping[str, Any]) -> None:
                 "object": lambda item: isinstance(item, dict),
                 "array": lambda item: isinstance(item, list),
                 "string": lambda item: isinstance(item, str),
+                "boolean": lambda item: isinstance(item, bool),
                 "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
                 "number": lambda item: isinstance(item, (int, float))
                 and not isinstance(item, bool),

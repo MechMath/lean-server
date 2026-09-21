@@ -6,8 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 
-PROTOCOL_VERSION = 1
-VERIFY_PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 2
 WorkerStatus = Literal["ok", "compile_error", "internal_error"]
 
 
@@ -92,7 +91,7 @@ class VerifyWorkerRequest:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "protocol_version": VERIFY_PROTOCOL_VERSION,
+            "protocol_version": PROTOCOL_VERSION,
             "type": "verify",
             "request_id": self.request_id,
             "formal_statement": self.formal_statement,
@@ -184,13 +183,15 @@ def decode_worker_message(line: str) -> WorkerMessage:
     if not isinstance(value, dict):
         raise ProtocolError("worker message must be an object")
     version = value.get("protocol_version")
+    if type(version) is not int or version != PROTOCOL_VERSION:
+        raise ProtocolError(f"unsupported worker protocol_version: {version!r}")
     message_type = value.get("type")
-    if version == PROTOCOL_VERSION and message_type == "ready":
+    if message_type == "ready":
         lean_version = value.get("lean_version")
         if not isinstance(lean_version, str):
             raise ProtocolError("ready message requires lean_version")
         return WorkerReady(lean_version=lean_version)
-    if version == PROTOCOL_VERSION and message_type == "result":
+    if message_type == "result":
         return WorkerResult(
             request_id=_required_string(value, "request_id", nonempty=True),
             status=_worker_status(value),
@@ -198,7 +199,7 @@ def decode_worker_message(line: str) -> WorkerMessage:
             warnings=_diagnostics(value, "warnings"),
             errors=_diagnostics(value, "errors"),
         )
-    if version == VERIFY_PROTOCOL_VERSION and message_type == "verify_result":
+    if message_type == "verify_result":
         return VerifyWorkerResult(
             request_id=_required_string(value, "request_id", nonempty=True),
             status=_worker_status(value),
@@ -211,7 +212,4 @@ def decode_worker_message(line: str) -> WorkerMessage:
             tool_errors=_string_array(value, "tool_errors"),
             failed_declarations=_string_array(value, "failed_declarations"),
         )
-    raise ProtocolError(
-        "unsupported worker protocol_version/message type combination: "
-        f"{version!r}/{message_type!r}"
-    )
+    raise ProtocolError(f"unsupported worker message type: {message_type!r}")
