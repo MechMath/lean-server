@@ -1,0 +1,151 @@
+test_decodes_compile_error_and_position (contract.test_worker_protocol.WorkerProtocolTests.test_decodes_compile_error_and_position) ... ok
+test_decodes_ready (contract.test_worker_protocol.WorkerProtocolTests.test_decodes_ready) ... ok
+test_decodes_success (contract.test_worker_protocol.WorkerProtocolTests.test_decodes_success) ... ok
+test_decodes_verify_result_v2 (contract.test_worker_protocol.WorkerProtocolTests.test_decodes_verify_result_v2) ... ok
+test_rejects_invalid_verify_result_arrays (contract.test_worker_protocol.WorkerProtocolTests.test_rejects_invalid_verify_result_arrays) ... ok
+test_rejects_non_json_stdout (contract.test_worker_protocol.WorkerProtocolTests.test_rejects_non_json_stdout) ... ok
+test_rejects_wrong_version (contract.test_worker_protocol.WorkerProtocolTests.test_rejects_wrong_version) ... ok
+test_rejects_wrong_version_and_type_pair (contract.test_worker_protocol.WorkerProtocolTests.test_rejects_wrong_version_and_type_pair) ... ok
+test_request_matches_frozen_example (contract.test_worker_protocol.WorkerProtocolTests.test_request_matches_frozen_example) ... ok
+test_verify_request_uses_protocol_v2_without_changing_compile_v1 (contract.test_worker_protocol.WorkerProtocolTests.test_verify_request_uses_protocol_v2_without_changing_compile_v1) ... ok
+Build completed successfully (10 jobs).
+test_accepts_allowed_standard_axioms (lean.test_verifier.LeanVerifierTests.test_accepts_allowed_standard_axioms) ... ok
+test_accepts_correct_proof (lean.test_verifier.LeanVerifierTests.test_accepts_correct_proof) ... ok
+test_accepts_definitionally_equal_recursive_helper (lean.test_verifier.LeanVerifierTests.test_accepts_definitionally_equal_recursive_helper) ... ok
+test_accepts_renamed_universe_parameter (lean.test_verifier.LeanVerifierTests.test_accepts_renamed_universe_parameter) ... ok
+test_accepts_safe_definition (lean.test_verifier.LeanVerifierTests.test_accepts_safe_definition) ... ok
+test_accepts_unchanged_recursive_definition_with_new_proof (lean.test_verifier.LeanVerifierTests.test_accepts_unchanged_recursive_definition_with_new_proof) ... ok
+test_missing_type_dependency_is_a_validation_error (lean.test_verifier.LeanVerifierTests.test_missing_type_dependency_is_a_validation_error) ... ok
+test_proof_helpers_are_not_part_of_fixed_definition_contract (lean.test_verifier.LeanVerifierTests.test_proof_helpers_are_not_part_of_fixed_definition_contract) ... ok
+test_rejects_changed_definition_that_depends_on_placeholder (lean.test_verifier.LeanVerifierTests.test_rejects_changed_definition_that_depends_on_placeholder) ... ok
+test_rejects_changed_inductive_constructors (lean.test_verifier.LeanVerifierTests.test_rejects_changed_inductive_constructors) ... ok
+test_rejects_changed_mutually_recursive_definition (lean.test_verifier.LeanVerifierTests.test_rejects_changed_mutually_recursive_definition) ... ok
+test_rejects_changed_recursive_definition (lean.test_verifier.LeanVerifierTests.test_rejects_changed_recursive_definition) ... ok
+test_rejects_decide_native_axiom (lean.test_verifier.LeanVerifierTests.test_rejects_decide_native_axiom) ... ok
+test_rejects_direct_sorry (lean.test_verifier.LeanVerifierTests.test_rejects_direct_sorry) ... ok
+test_rejects_documented_native_decide_disagreement (lean.test_verifier.LeanVerifierTests.test_rejects_documented_native_decide_disagreement) ... ok
+test_rejects_explicit_axiom (lean.test_verifier.LeanVerifierTests.test_rejects_explicit_axiom) ... ok
+test_rejects_missing_declaration (lean.test_verifier.LeanVerifierTests.test_rejects_missing_declaration) ... ok
+test_rejects_namespace_shadowing (lean.test_verifier.LeanVerifierTests.test_rejects_namespace_shadowing) ... ok
+test_rejects_native_decide_axiom (lean.test_verifier.LeanVerifierTests.test_rejects_native_decide_axiom) ... ok
+test_rejects_open_private_command (lean.test_verifier.LeanVerifierTests.test_rejects_open_private_command) ... ok
+test_rejects_partial_multi_declaration_candidate (lean.test_verifier.LeanVerifierTests.test_rejects_partial_multi_declaration_candidate) ... ok
+test_rejects_signature_changed_by_unfolding_placeholder_definition (lean.test_verifier.LeanVerifierTests.test_rejects_signature_changed_by_unfolding_placeholder_definition) ... ok
+test_rejects_signature_mismatch (lean.test_verifier.LeanVerifierTests.test_rejects_signature_mismatch) ... ok
+test_rejects_swapped_universe_parameters (lean.test_verifier.LeanVerifierTests.test_rejects_swapped_universe_parameters) ... ok
+test_rejects_transitive_axiom_dependency (lean.test_verifier.LeanVerifierTests.test_rejects_transitive_axiom_dependency) ... ok
+test_rejects_transitive_sorry_dependency (lean.test_verifier.LeanVerifierTests.test_rejects_transitive_sorry_dependency) ... ok
+test_rejects_unsafe_cast (lean.test_verifier.LeanVerifierTests.test_rejects_unsafe_cast) ... ok
+test_rejects_unsafe_definition (lean.test_verifier.LeanVerifierTests.test_rejects_unsafe_definition) ... ok
+Build completed successfully (10 jobs).
+test_declarations_options_attributes_and_notation_are_isolated (lean.test_worker.LeanWorkerTests.test_declarations_options_attributes_and_notation_are_isolated) ... ok
+test_historical_repeated_diagnostic_does_not_expand_transport (lean.test_worker.LeanWorkerTests.test_historical_repeated_diagnostic_does_not_expand_transport) ... ok
+test_identical_messages_at_distinct_locations_are_preserved (lean.test_worker.LeanWorkerTests.test_identical_messages_at_distinct_locations_are_preserved) ... ok
+test_mathlib_code_and_warning (lean.test_worker.LeanWorkerTests.test_mathlib_code_and_warning) ... ok
+test_one_hundred_sequential_requests (lean.test_worker.LeanWorkerTests.test_one_hundred_sequential_requests) ... ok
+test_real_output_matches_frozen_schema_and_golden_files (lean.test_worker.LeanWorkerTests.test_real_output_matches_frozen_schema_and_golden_files) ... ok
+test_source_errors_do_not_stop_worker (lean.test_worker.LeanWorkerTests.test_source_errors_do_not_stop_worker) ... ok
+test_unknown_import_is_a_compile_error (lean.test_worker.LeanWorkerTests.test_unknown_import_is_a_compile_error) ... ok
+test_cancelling_queued_request_releases_capacity (service.test_pool.CompilerPoolTests.test_cancelling_queued_request_releases_capacity) ... ok
+test_limits_concurrency_to_worker_count (service.test_pool.CompilerPoolTests.test_limits_concurrency_to_worker_count) ... ok
+test_limits_parallel_worker_startup (service.test_pool.CompilerPoolTests.test_limits_parallel_worker_startup) ... ok
+test_queued_timeout_releases_capacity_without_executing_job (service.test_pool.CompilerPoolTests.test_queued_timeout_releases_capacity_without_executing_job) ... ok
+test_rejects_after_close (service.test_pool.CompilerPoolTests.test_rejects_after_close) ... ok
+test_rejects_when_pending_queue_is_full (service.test_pool.CompilerPoolTests.test_rejects_when_pending_queue_is_full) ... ok
+test_single_worker_preserves_fifo_order (service.test_pool.CompilerPoolTests.test_single_worker_preserves_fifo_order) ... ok
+test_cleanup_exception_does_not_kill_worker_slot (service.test_recovery.PoolRecoveryTests.test_cleanup_exception_does_not_kill_worker_slot) ... ok
+test_close_cancels_active_and_queued_requests (service.test_recovery.PoolRecoveryTests.test_close_cancels_active_and_queued_requests) ... ok
+test_close_reaps_replacement_during_startup (service.test_recovery.PoolRecoveryTests.test_close_reaps_replacement_during_startup) ... ok
+test_crash_replaces_only_failed_worker (service.test_recovery.PoolRecoveryTests.test_crash_replaces_only_failed_worker) ... ok
+test_internal_error_replaces_worker (service.test_recovery.PoolRecoveryTests.test_internal_error_replaces_worker) ... ok
+test_known_panic_is_not_retryable_and_capacity_recovers (service.test_recovery.PoolRecoveryTests.test_known_panic_is_not_retryable_and_capacity_recovers) ... ok
+test_protocol_error_replaces_worker (service.test_recovery.PoolRecoveryTests.test_protocol_error_replaces_worker) ... ok
+test_queue_time_is_deducted_from_execution_budget (service.test_recovery.PoolRecoveryTests.test_queue_time_is_deducted_from_execution_budget) ... ok
+test_stderr_flood_does_not_prevent_crash_recovery (service.test_recovery.PoolRecoveryTests.test_stderr_flood_does_not_prevent_crash_recovery) ... ok
+test_timeout_replaces_worker_and_recovers_capacity (service.test_recovery.PoolRecoveryTests.test_timeout_replaces_worker_and_recovers_capacity) ... ok
+test_non_json_output_is_an_error (test_compiler.DiagnosticTests.test_non_json_output_is_an_error) ... ok
+test_splits_warning_and_error_messages (test_compiler.DiagnosticTests.test_splits_warning_and_error_messages) ... ok
+test_accepts_sorry_when_enabled (test_http.HTTPTests.test_accepts_sorry_when_enabled) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_check_still_rejects_text_plain (test_http.HTTPTests.test_check_still_rejects_text_plain) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 415 -
+ok
+test_compiles_valid_code (test_http.HTTPTests.test_compiles_valid_code) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_health (test_http.HTTPTests.test_health) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "GET /healthz HTTP/1.1" 200 -
+ok
+test_known_panic_is_explicit_and_not_a_proof_rejection (test_http.HTTPTests.test_known_panic_is_explicit_and_not_a_proof_rejection) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 503 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 503 -
+ok
+test_maps_worker_crash_to_retryable_error (test_http.HTTPTests.test_maps_worker_crash_to_retryable_error) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 503 -
+ok
+test_queue_timeout_does_not_count_as_compilation (test_http.HTTPTests.test_queue_timeout_does_not_count_as_compilation) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_ready (test_http.HTTPTests.test_ready) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "GET /readyz HTTP/1.1" 200 -
+ok
+test_rejects_invalid_allow_sorry (test_http.HTTPTests.test_rejects_invalid_allow_sorry) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 400 -
+ok
+test_rejects_missing_code (test_http.HTTPTests.test_rejects_missing_code) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 400 -
+ok
+test_rejects_sorry_by_default (test_http.HTTPTests.test_rejects_sorry_by_default) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_returns_lean_error (test_http.HTTPTests.test_returns_lean_error) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_returns_lean_warning (test_http.HTTPTests.test_returns_lean_warning) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_returns_overload_when_queue_is_full (test_http.HTTPTests.test_returns_overload_when_queue_is_full) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 503 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_returns_timeout_result (test_http.HTTPTests.test_returns_timeout_result) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 200 -
+ok
+test_verify_proof_accepts_axle_sdk_text_plain_json (test_http.HTTPTests.test_verify_proof_accepts_axle_sdk_text_plain_json) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 200 -
+ok
+test_verify_proof_allows_explicit_long_budget (test_http.HTTPTests.test_verify_proof_allows_explicit_long_budget) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 200 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/check HTTP/1.1" 400 -
+ok
+test_verify_proof_maps_worker_failure_to_retryable_503 (test_http.HTTPTests.test_verify_proof_maps_worker_failure_to_retryable_503) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 503 -
+ok
+test_verify_proof_rejects_non_boolean_use_def_eq (test_http.HTTPTests.test_verify_proof_rejects_non_boolean_use_def_eq) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+ok
+test_verify_proof_rejects_unsupported_options (test_http.HTTPTests.test_verify_proof_rejects_unsupported_options) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 400 -
+ok
+test_verify_proof_returns_axle_compatible_success (test_http.HTTPTests.test_verify_proof_returns_axle_compatible_success) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 200 -
+ok
+test_verify_proof_returns_lean_error_as_http_200 (test_http.HTTPTests.test_verify_proof_returns_lean_error_as_http_200) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 200 -
+ok
+test_verify_proof_returns_semantic_failure_as_http_200 (test_http.HTTPTests.test_verify_proof_returns_semantic_failure_as_http_200) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 200 -
+ok
+test_verify_proof_timeout_uses_axle_error_envelope (test_http.HTTPTests.test_verify_proof_timeout_uses_axle_error_envelope) ... 127.0.0.1 - - [21/Sep/2026 16:32:23] "POST /api/v1/verify_proof HTTP/1.1" 200 -
+ok
+test_accepts_matching_environment (test_preflight.StartupCheckTests.test_accepts_matching_environment) ... ok
+test_rejects_mathlib_checkout_mismatch (test_preflight.StartupCheckTests.test_rejects_mathlib_checkout_mismatch) ... ok
+test_rejects_wrong_runtime_version (test_preflight.StartupCheckTests.test_rejects_wrong_runtime_version) ... ok
+test_rejects_wrong_toolchain_configuration (test_preflight.StartupCheckTests.test_rejects_wrong_toolchain_configuration) ... ok
+test_reports_sorry_as_a_warning (workers.test_cli.LeanCliBackendTests.test_reports_sorry_as_a_warning) ... ok
+test_returns_success_error_and_warning (workers.test_cli.LeanCliBackendTests.test_returns_success_error_and_warning) ... ok
+test_cancelling_ready_handshake_reaps_process (workers.test_process.WorkerProcessTests.test_cancelling_ready_handshake_reaps_process) ... ok
+test_compiles_multiple_requests_in_one_process (workers.test_process.WorkerProcessTests.test_compiles_multiple_requests_in_one_process) ... ok
+test_drains_oversized_stderr_and_bounds_retained_output (workers.test_process.WorkerProcessTests.test_drains_oversized_stderr_and_bounds_retained_output) ... ok
+test_rejects_invalid_worker_output (workers.test_process.WorkerProcessTests.test_rejects_invalid_worker_output) ... ok
+test_reports_ready_handshake_timeout (workers.test_process.WorkerProcessTests.test_reports_ready_handshake_timeout) ... ok
+test_returns_compile_error_without_killing_worker (workers.test_process.WorkerProcessTests.test_returns_compile_error_without_killing_worker) ... ok
+test_verifies_with_v2_after_v1_ready_handshake (workers.test_process.WorkerProcessTests.test_verifies_with_v2_after_v1_ready_handshake) ... ok
+test_verify_response_can_exceed_default_stream_reader_limit (workers.test_process.WorkerProcessTests.test_verify_response_can_exceed_default_stream_reader_limit) ... ok
+
+----------------------------------------------------------------------
+Ran 103 tests in 70.408s
+
+OK

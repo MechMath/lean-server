@@ -3,3 +3,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Generated validation details; keep source archives, summaries and final evidence.
+/doc/issues/validation-*/data/*-classification.jsonl
+/doc/issues/validation-*/data/strict-replay.jsonl
+/doc/issues/validation-*/data/remote-*/*-index.jsonl
+/doc/issues/validation-*/data/remote-*/*-responses.jsonl.gz
+/doc/issues/validation-*/data/remote-*/logs/*
+!/doc/issues/validation-*/data/remote-*/logs/*-tests-final.log

@@ -2,6 +2,18 @@
 
 ## Status
 
+- **Fixed on 2026-09-21** for the retained validation set. The historical
+  replay produced semantic HTTP results for all 2,950 non-excluded affected
+  UUIDs, with no transport failures or timeouts. The remaining 107 affected
+  UUIDs have malformed references and were deliberately excluded from replay;
+  they do not indicate a remaining transport defect.
+- Updated on 2026-09-21: stdout now has an explicit 8 MiB limit; stderr is
+  drained independently in chunks with a bounded 64 KiB tail. Real replay
+  also found 197,802 identical diagnostics at the same location in one result
+  (27,494,706 worker-response bytes). The compiler now deduplicates by severity,
+  text, filename, and both positions, preserving distinct errors. That record
+  returns HTTP 200 with one compile error instead of a transport failure.
+  See [219 validation](219-validation-2026-09-21.md) for the replay outcome.
 - Confirmed on 2026-09-18.
 - Affects the persistent `WorkerProcessBackend`.
 - Does not classify the submitted Lean program as a compile failure; the HTTP
@@ -122,6 +134,8 @@ Add tests that exercise the real persistent subprocess transport:
 4. Repeating a large Lean diagnostic does not increase the replacement count.
 5. Concurrent requests below `worker_count` do not return queue-overflow 503s.
 
-The client-side batch validator should continue to regard all HTTP 429/5xx and
-transport exceptions as retryable/nonterminal; only an HTTP 200 response with
-`okay: false` is a Lean validation failure.
+HTTP 429/5xx and transport exceptions are not proof verdicts. Clients should
+respect `retryable`; a known deterministic Lean panic is nonterminal but must
+not be retried unchanged automatically. An HTTP 200 response with `okay: false`
+is a validation rejection (inspect diagnostics to distinguish a bad reference,
+candidate error, or verifier policy).

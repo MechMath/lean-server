@@ -2,12 +2,19 @@
 
 ## Status
 
+- **Mitigated, not fixed.** The crash is now classified and contained, but the
+  same input still triggers the underlying Lean 4.30 panic.
+- Mitigated on 2026-09-21: this known panic returns HTTP 503 with
+  `error_type: "LeanPanic"` and `retryable: false`; the pool replaces the crashed
+  worker and remains usable. The underlying Lean 4.30 panic is not repaired.
+  Clients should preserve this infrastructure outcome and avoid retrying the
+  identical input automatically. It is not an `okay: false` proof verdict.
 - Confirmed on 2026-09-18 with Lean 4.30.0.
 - Observed once in a full batch of 51,336 candidate files.
 - This is an infrastructure failure, not a normal Lean compile result.
 - The server returned retryable HTTP 503 and replaced the worker.
 
-## Observed response
+## Historical response (before mitigation)
 
 ```json
 {
@@ -51,7 +58,7 @@ data/disagreements.jsonl
 
 under UUID `Goedel-Pset-153949`.
 
-## Impact
+## Historical impact
 
 - The Lean worker exits instead of returning a structured compile error.
 - The pool reports a retryable 503 and replaces the worker.
