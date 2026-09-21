@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .protocol import WorkerRequest, WorkerResult
+from .protocol import WorkerJobRequest, WorkerJobResult
 
 
 class CompilerBackend(Protocol):
@@ -10,6 +10,6 @@ class CompilerBackend(Protocol):
 
     async def start(self) -> None: ...
 
-    async def compile(self, request: WorkerRequest) -> WorkerResult: ...
+    async def compile(self, request: WorkerJobRequest) -> WorkerJobResult: ...
 
     async def close(self) -> None: ...

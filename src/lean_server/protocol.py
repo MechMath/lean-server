@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 
 PROTOCOL_VERSION = 1
+VERIFY_PROTOCOL_VERSION = 2
 WorkerStatus = Literal["ok", "compile_error", "internal_error"]
 
 
 class ProtocolError(ValueError):
-    """The worker emitted a message that does not satisfy protocol v1."""
+    """The worker emitted a message that does not satisfy a supported protocol."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +84,27 @@ class WorkerRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifyWorkerRequest:
+    request_id: str
+    formal_statement: str
+    content: str
+    use_def_eq: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_version": VERIFY_PROTOCOL_VERSION,
+            "type": "verify",
+            "request_id": self.request_id,
+            "formal_statement": self.formal_statement,
+            "content": self.content,
+            "use_def_eq": self.use_def_eq,
+        }
+
+    def to_json_line(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerReady:
     lean_version: str
 
@@ -95,7 +118,62 @@ class WorkerResult:
     errors: tuple[WorkerDiagnostic, ...]
 
 
-WorkerMessage = WorkerReady | WorkerResult
+@dataclass(frozen=True, slots=True)
+class VerifyWorkerResult:
+    request_id: str
+    status: WorkerStatus
+    compile_ms: float
+    formal_statement_ms: float
+    candidate_ms: float
+    declarations_ms: float
+    warnings: tuple[WorkerDiagnostic, ...]
+    errors: tuple[WorkerDiagnostic, ...]
+    tool_errors: tuple[str, ...]
+    failed_declarations: tuple[str, ...]
+
+
+WorkerJobRequest = WorkerRequest | VerifyWorkerRequest
+WorkerJobResult = WorkerResult | VerifyWorkerResult
+WorkerMessage = WorkerReady | WorkerJobResult
+
+
+def _required_string(value: dict[str, Any], field: str, *, nonempty: bool = False) -> str:
+    item = value.get(field)
+    if not isinstance(item, str) or (nonempty and not item):
+        qualifier = "non-empty " if nonempty else ""
+        raise ProtocolError(f"worker message requires {qualifier}string {field}")
+    return item
+
+
+def _required_number(value: dict[str, Any], field: str) -> float:
+    item = value.get(field)
+    if isinstance(item, bool) or not isinstance(item, (int, float)):
+        raise ProtocolError(f"worker message requires numeric {field}")
+    number = float(item)
+    if not math.isfinite(number) or number < 0:
+        raise ProtocolError(f"worker message requires finite non-negative {field}")
+    return number
+
+
+def _worker_status(value: dict[str, Any]) -> WorkerStatus:
+    status = value.get("status")
+    if status not in ("ok", "compile_error", "internal_error"):
+        raise ProtocolError("invalid worker result status")
+    return status
+
+
+def _diagnostics(value: dict[str, Any], field: str) -> tuple[WorkerDiagnostic, ...]:
+    items = value.get(field)
+    if not isinstance(items, list):
+        raise ProtocolError(f"worker result {field} must be an array")
+    return tuple(WorkerDiagnostic.from_dict(item) for item in items)
+
+
+def _string_array(value: dict[str, Any], field: str) -> tuple[str, ...]:
+    items = value.get(field)
+    if not isinstance(items, list) or not all(isinstance(item, str) for item in items):
+        raise ProtocolError(f"worker result {field} must be an array of strings")
+    return tuple(items)
 
 
 def decode_worker_message(line: str) -> WorkerMessage:
@@ -105,35 +183,35 @@ def decode_worker_message(line: str) -> WorkerMessage:
         raise ProtocolError("worker message is not valid JSON") from exc
     if not isinstance(value, dict):
         raise ProtocolError("worker message must be an object")
-    if value.get("protocol_version") != PROTOCOL_VERSION:
-        raise ProtocolError(f"worker protocol_version must be {PROTOCOL_VERSION}")
-
+    version = value.get("protocol_version")
     message_type = value.get("type")
-    if message_type == "ready":
+    if version == PROTOCOL_VERSION and message_type == "ready":
         lean_version = value.get("lean_version")
         if not isinstance(lean_version, str):
             raise ProtocolError("ready message requires lean_version")
         return WorkerReady(lean_version=lean_version)
-    if message_type != "result":
-        raise ProtocolError("worker message type must be ready or result")
-
-    request_id = value.get("request_id")
-    status = value.get("status")
-    compile_ms = value.get("compile_ms")
-    warnings = value.get("warnings")
-    errors = value.get("errors")
-    if not isinstance(request_id, str) or not request_id:
-        raise ProtocolError("result message requires a non-empty request_id")
-    if status not in ("ok", "compile_error", "internal_error"):
-        raise ProtocolError("invalid worker result status")
-    if isinstance(compile_ms, bool) or not isinstance(compile_ms, (int, float)):
-        raise ProtocolError("result message requires numeric compile_ms")
-    if not isinstance(warnings, list) or not isinstance(errors, list):
-        raise ProtocolError("result warnings and errors must be arrays")
-    return WorkerResult(
-        request_id=request_id,
-        status=status,
-        compile_ms=float(compile_ms),
-        warnings=tuple(WorkerDiagnostic.from_dict(item) for item in warnings),
-        errors=tuple(WorkerDiagnostic.from_dict(item) for item in errors),
+    if version == PROTOCOL_VERSION and message_type == "result":
+        return WorkerResult(
+            request_id=_required_string(value, "request_id", nonempty=True),
+            status=_worker_status(value),
+            compile_ms=_required_number(value, "compile_ms"),
+            warnings=_diagnostics(value, "warnings"),
+            errors=_diagnostics(value, "errors"),
+        )
+    if version == VERIFY_PROTOCOL_VERSION and message_type == "verify_result":
+        return VerifyWorkerResult(
+            request_id=_required_string(value, "request_id", nonempty=True),
+            status=_worker_status(value),
+            compile_ms=_required_number(value, "compile_ms"),
+            formal_statement_ms=_required_number(value, "formal_statement_ms"),
+            candidate_ms=_required_number(value, "candidate_ms"),
+            declarations_ms=_required_number(value, "declarations_ms"),
+            warnings=_diagnostics(value, "warnings"),
+            errors=_diagnostics(value, "errors"),
+            tool_errors=_string_array(value, "tool_errors"),
+            failed_declarations=_string_array(value, "failed_declarations"),
+        )
+    raise ProtocolError(
+        "unsupported worker protocol_version/message type combination: "
+        f"{version!r}/{message_type!r}"
     )

@@ -4,7 +4,7 @@ import asyncio
 import unittest
 
 from lean_server.protocol import WorkerRequest, WorkerResult
-from lean_server.service import CompilerPool, PoolClosedError, PoolOverloadedError
+from lean_server.service import CompilerPool, PoolClosedError, PoolOverloadedError, PoolTimeoutError
 
 
 def successful_result(request: WorkerRequest) -> WorkerResult:
@@ -161,6 +161,50 @@ class CompilerPoolTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(PoolClosedError):
             await pool.compile(WorkerRequest("late", "code"))
+
+    async def test_queued_timeout_releases_capacity_without_executing_job(self) -> None:
+        tracker = BackendTracker(blocked=True)
+        pool = CompilerPool(tracker.factory, worker_count=1, queue_capacity=1)
+        await pool.start()
+        active = asyncio.create_task(pool.compile(WorkerRequest("active", "code")))
+        try:
+            await tracker.entered.wait()
+            with self.assertRaises(PoolTimeoutError):
+                await asyncio.wait_for(
+                    pool.compile(WorkerRequest("expired", "code"), timeout_seconds=0.02),
+                    timeout=1,
+                )
+            self.assertEqual(pool.snapshot.queue_depth, 0)
+            self.assertEqual(tracker.order, ["active"])
+            following = asyncio.create_task(pool.compile(WorkerRequest("following", "code")))
+            await asyncio.sleep(0)
+            tracker.gate.set()
+            await asyncio.gather(active, following)
+            self.assertEqual(tracker.order, ["active", "following"])
+            self.assertEqual(pool.snapshot.replacements, 0)
+        finally:
+            await pool.close()
+            await asyncio.gather(active, return_exceptions=True)
+
+    async def test_cancelling_queued_request_releases_capacity(self) -> None:
+        tracker = BackendTracker(blocked=True)
+        pool = CompilerPool(tracker.factory, worker_count=1, queue_capacity=1)
+        await pool.start()
+        active = asyncio.create_task(pool.compile(WorkerRequest("active", "code")))
+        try:
+            await tracker.entered.wait()
+            queued = asyncio.create_task(pool.compile(WorkerRequest("cancelled", "code")))
+            await asyncio.sleep(0)
+            queued.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await queued
+            self.assertEqual(pool.snapshot.queue_depth, 0)
+            tracker.gate.set()
+            await active
+            self.assertEqual(tracker.order, ["active"])
+        finally:
+            await pool.close()
+            await asyncio.gather(active, return_exceptions=True)
 
 
 if __name__ == "__main__":

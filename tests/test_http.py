@@ -34,10 +34,17 @@ class HTTPTests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join()
 
-    def request(self, method: str, path: str, body: object | None = None) -> tuple[int, dict]:
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: object | None = None,
+        *,
+        content_type: str = "application/json",
+    ) -> tuple[int, dict]:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         encoded = None if body is None else json.dumps(body)
-        headers = {} if body is None else {"Content-Type": "application/json"}
+        headers = {} if body is None else {"Content-Type": content_type}
         connection.request(method, path, body=encoded, headers=headers)
         response = connection.getresponse()
         value = json.loads(response.read())
@@ -50,6 +57,23 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(body["status"], "ok")
         self.assertEqual(body["lean_version"], "4.30.0")
         self.assertEqual(body["pool"]["ready_workers"], 1)
+
+    def test_known_panic_is_explicit_and_not_a_proof_rejection(self) -> None:
+        cases = (
+            ("/api/v1/check", {"code": "__NAT_POW_PANIC__"}),
+            ("/api/v1/verify_proof", {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "__NAT_POW_PANIC__",
+                "environment": "lean-4.30.0",
+            }),
+        )
+        for path, payload in cases:
+            with self.subTest(path=path):
+                status, body = self.request("POST", path, payload)
+                self.assertEqual(status, 503)
+                self.assertEqual(body["error_type"], "LeanPanic")
+                self.assertFalse(body["retryable"])
+                self.assertNotIn("okay", body)
 
     def test_ready(self) -> None:
         for _ in range(200):
@@ -108,6 +132,25 @@ class HTTPTests(unittest.TestCase):
         self.assertFalse(body["okay"])
         self.assertTrue(body["timed_out"])
 
+    def test_queue_timeout_does_not_count_as_compilation(self) -> None:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            active = executor.submit(
+                self.request, "POST", "/api/v1/check", {"code": "__SLEEP__:0.2"}
+            )
+            deadline = time.monotonic() + 2
+            while self.server.runtime.snapshot().active_workers == 0:
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(0.001)
+            status, body = self.request(
+                "POST", "/api/v1/check", {"code": "code", "timeout_seconds": 0.02}
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(body["timed_out"])
+            self.assertGreater(body["timings"]["queue_ms"], 0)
+            self.assertEqual(body["timings"]["compile_ms"], 0)
+            self.assertEqual(self.server.runtime.snapshot().queue_depth, 0)
+            self.assertTrue(active.result()[1]["okay"])
+
     def test_rejects_sorry_by_default(self) -> None:
         status, body = self.request("POST", "/api/v1/check", {"code": "__SORRY__"})
         self.assertEqual(status, 200)
@@ -125,6 +168,176 @@ class HTTPTests(unittest.TestCase):
         self.assertTrue(body["okay"])
         self.assertEqual(body["errors"], [])
         self.assertEqual(body["warnings"][0]["message"], "declaration uses `sorry`")
+
+    def test_verify_proof_returns_axle_compatible_success(self) -> None:
+        candidate = "theorem answer : True := by trivial"
+        status, body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": candidate,
+                "environment": "lean-4.30.0",
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["okay"])
+        self.assertEqual(body["content"], candidate)
+        self.assertEqual(body["lean_messages"], {"errors": [], "warnings": [], "infos": []})
+        self.assertEqual(body["tool_messages"], {"errors": [], "warnings": [], "infos": []})
+        self.assertEqual(body["failed_declarations"], [])
+        self.assertEqual(body["timings"]["formal_statement_ms"], 1.0)
+        self.assertEqual(body["timings"]["candidate_ms"], 2.0)
+        self.assertEqual(body["timings"]["declarations_ms"], 1.0)
+
+    def test_verify_proof_accepts_axle_sdk_text_plain_json(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "theorem answer : True := by trivial",
+                "environment": "lean-4.30.0",
+            },
+            content_type="text/plain; charset=utf-8",
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["okay"])
+
+    def test_check_still_rejects_text_plain(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/check",
+            {"code": "def answer := 42"},
+            content_type="text/plain",
+        )
+
+        self.assertEqual(status, 415)
+        self.assertIn("application/json", body["error"])
+
+    def test_verify_proof_returns_semantic_failure_as_http_200(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "__TOOL_ERROR__",
+                "environment": "lean-4.30.0",
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(body["okay"])
+        self.assertIn("Axiom", body["tool_messages"]["errors"][0])
+        self.assertEqual(body["failed_declarations"], ["answer"])
+
+    def test_verify_proof_returns_lean_error_as_http_200(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "__ERROR__",
+                "environment": "lean-4.30.0",
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(body["okay"])
+        self.assertEqual(body["lean_messages"]["errors"], ["fake candidate error"])
+
+    def test_verify_proof_timeout_uses_axle_error_envelope(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "__SLEEP__:1",
+                "environment": "lean-4.30.0",
+                "timeout_seconds": 0.05,
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["error_type"], "LeanTimeout")
+        self.assertIn("exceeded", body["error"])
+
+    def test_verify_proof_allows_explicit_long_budget(self) -> None:
+        payload = {
+            "formal_statement": "theorem answer : True := by sorry",
+            "content": "theorem answer : True := by trivial",
+            "environment": "lean-4.30.0",
+            "timeout_seconds": 600,
+        }
+        status, body = self.request("POST", "/api/v1/verify_proof", payload)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["okay"])
+        for invalid in (601, 0, -1, True, float("inf"), float("nan")):
+            with self.subTest(timeout=invalid):
+                status, body = self.request(
+                    "POST", "/api/v1/verify_proof", {**payload, "timeout_seconds": invalid}
+                )
+                self.assertEqual(status, 400)
+                self.assertIn("timeout_seconds", body["error"])
+        status, body = self.request(
+            "POST", "/api/v1/check", {"code": "def answer := 42", "timeout_seconds": 121}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("timeout_seconds", body["error"])
+
+    def test_verify_proof_maps_worker_failure_to_retryable_503(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "__INTERNAL_ERROR__",
+                "environment": "lean-4.30.0",
+            },
+        )
+
+        self.assertEqual(status, 503)
+        self.assertTrue(body["retryable"])
+
+    def test_verify_proof_rejects_unsupported_options(self) -> None:
+        base = {
+            "formal_statement": "theorem answer : True := by sorry",
+            "content": "theorem answer : True := by trivial",
+            "environment": "lean-4.30.0",
+        }
+        cases = (
+            ({"environment": "lean-4.29.0"}, "environment"),
+            ({"permitted_sorries": ["helper"]}, "permitted_sorries"),
+            ({"mathlib_options": True}, "mathlib_options"),
+            ({"global_options": {"maxHeartbeats": 1}}, "global_options"),
+            ({"verify_negation": True}, "verify_negation"),
+            ({"ignore_imports": False}, "ignore_imports"),
+            ({"unknown": True}, "unknown"),
+        )
+        for update, expected in cases:
+            with self.subTest(update=update):
+                status, body = self.request(
+                    "POST", "/api/v1/verify_proof", {**base, **update}
+                )
+                self.assertEqual(status, 400)
+                self.assertIn(expected, body["error"])
+
+    def test_verify_proof_rejects_non_boolean_use_def_eq(self) -> None:
+        status, body = self.request(
+            "POST",
+            "/api/v1/verify_proof",
+            {
+                "formal_statement": "theorem answer : True := by sorry",
+                "content": "theorem answer : True := by trivial",
+                "environment": "lean-4.30.0",
+                "use_def_eq": 1,
+            },
+        )
+
+        self.assertEqual(status, 400)
+        self.assertIn("use_def_eq", body["error"])
 
     def test_maps_worker_crash_to_retryable_error(self) -> None:
         status, body = self.request("POST", "/api/v1/check", {"code": "__CRASH__"})

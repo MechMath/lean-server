@@ -9,7 +9,14 @@ import time
 from pathlib import Path
 
 from lean_server.compiler import LEAN_TOOLCHAIN, PROJECT_ROOT
-from lean_server.protocol import Position, WorkerDiagnostic, WorkerRequest, WorkerResult
+from lean_server.protocol import (
+    Position,
+    VerifyWorkerRequest,
+    WorkerDiagnostic,
+    WorkerJobRequest,
+    WorkerJobResult,
+    WorkerResult,
+)
 
 
 class LeanCliBackend:
@@ -23,9 +30,11 @@ class LeanCliBackend:
     async def start(self) -> None:
         self._started = True
 
-    async def compile(self, request: WorkerRequest) -> WorkerResult:
+    async def compile(self, request: WorkerJobRequest) -> WorkerJobResult:
         if not self._started:
             raise RuntimeError("CLI backend has not been started")
+        if isinstance(request, VerifyWorkerRequest):
+            raise RuntimeError("strict verification requires the persistent Lean worker")
         started = time.perf_counter()
         self._process = await asyncio.create_subprocess_exec(
             "elan",
