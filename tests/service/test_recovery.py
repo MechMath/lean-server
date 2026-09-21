@@ -48,6 +48,9 @@ class PoolRecoveryTests(unittest.IsolatedAsyncioTestCase):
         result = await self.pool.compile(WorkerRequest("following", "code"))
         self.assertEqual(result.status, "ok")
         self.assertEqual(self.pool.snapshot.replacements, 1)
+        counters = self.pool.metrics_snapshot.counters
+        self.assertEqual(counters["execution_timeouts_total"], 1)
+        self.assertEqual(counters["worker_replacements_total"], 1)
 
     async def test_crash_replaces_only_failed_worker(self) -> None:
         unaffected = asyncio.create_task(
@@ -59,6 +62,7 @@ class PoolRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await unaffected).status, "ok")
         await wait_until_ready(self.pool, 2)
         self.assertEqual(self.pool.snapshot.replacements, 1)
+        self.assertEqual(self.pool.metrics_snapshot.counters["worker_crashes_total"], 1)
 
     async def test_protocol_error_replaces_worker(self) -> None:
         with self.assertRaises(PoolWorkerError):
@@ -67,6 +71,9 @@ class PoolRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         result = await self.pool.compile(WorkerRequest("following", "code"))
         self.assertEqual(result.status, "ok")
+        self.assertEqual(
+            self.pool.metrics_snapshot.counters["worker_protocol_errors_total"], 1
+        )
 
     async def test_internal_error_replaces_worker(self) -> None:
         with self.assertRaises(PoolWorkerError):
@@ -84,6 +91,45 @@ class PoolRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await wait_until_ready(self.pool, 2, replacements=1)
         result = await self.pool.compile(WorkerRequest("following", "code"))
         self.assertEqual(result.status, "ok")
+        counters = self.pool.metrics_snapshot.counters
+        self.assertEqual(counters["worker_crashes_total"], 1)
+        self.assertEqual(counters["lean_panics_total"], 1)
+
+    async def test_oversized_worker_message_has_dedicated_counter(self) -> None:
+        with self.assertRaises(PoolWorkerError):
+            await self.pool.compile(WorkerRequest("oversized", "__OVERSIZED_RESPONSE__"))
+        await wait_until_ready(self.pool, 2, replacements=1)
+
+        counters = self.pool.metrics_snapshot.counters
+        self.assertEqual(counters["worker_protocol_errors_total"], 1)
+        self.assertEqual(counters["worker_message_too_large_total"], 1)
+        self.assertEqual(counters["worker_replacements_total"], 1)
+
+    async def test_replacement_startup_failures_are_counted(self) -> None:
+        created = 0
+
+        def factory() -> WorkerProcessBackend:
+            nonlocal created
+            created += 1
+            if created == 2:
+                return WorkerProcessBackend(
+                    [sys.executable, "-c", "raise SystemExit(1)"],
+                    startup_timeout_seconds=0.5,
+                )
+            return WorkerProcessBackend([sys.executable, str(FAKE_WORKER)])
+
+        pool = CompilerPool(factory, worker_count=1, queue_capacity=1)
+        await pool.start()
+        try:
+            with self.assertLogs("lean_server.service.pool", level="ERROR"):
+                with self.assertRaises(PoolWorkerError):
+                    await pool.compile(WorkerRequest("crash", "__CRASH__"))
+                await wait_until_ready(pool, 1, replacements=1)
+            counters = pool.metrics_snapshot.counters
+            self.assertEqual(counters["replacement_startup_failures_total"], 1)
+            self.assertEqual(counters["worker_replacements_total"], 1)
+        finally:
+            await pool.close()
 
     async def test_close_cancels_active_and_queued_requests(self) -> None:
         active = asyncio.create_task(

@@ -83,15 +83,12 @@ class LeanWorkerTests(unittest.TestCase):
             self.assertEqual(recovered.status, "ok")
 
     def test_historical_repeated_diagnostic_does_not_expand_transport(self) -> None:
-        archive = PROJECT_ROOT / "doc/issues/validation-2026-09-18/data/disagreements.jsonl"
-        with archive.open() as stream:
-            row = next(
-                record for record in map(json.loads, stream)
-                if record["uuid"] == "0ae3c609-56ae-5904-9cf3-51d4cb9d0221"
-            )
+        source = (
+            PROJECT_ROOT / "tests/fixtures/historical_repeated_diagnostic.lean"
+        ).read_text()
         with Worker() as worker:
             # Previously: 197,802 identical errors, producing a 27 MB NDJSON line.
-            result = worker.compile(row["uuid"], row["candidate"])
+            result = worker.compile("historical-repeated-diagnostic", source)
             self.assertEqual(result.status, "compile_error")
             self.assertEqual(len(result.errors), 1)
             self.assertEqual(result.errors[0].message, "No goals to be solved")

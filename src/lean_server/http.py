@@ -211,6 +211,9 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
         return value
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/metrics":
+            self._json_response(HTTPStatus.OK, self.runtime.metrics_snapshot().to_dict())
+            return
         snapshot = self.runtime.snapshot()
         pool = asdict(snapshot)
         if self.path == "/healthz":
@@ -265,6 +268,7 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        self.runtime.increment_metric("compile_requests_total")
         started = time.perf_counter()
         worker_request = WorkerRequest(request_id=uuid.uuid4().hex, code=code)
         try:
@@ -302,9 +306,10 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
             return
 
         total_ms = (time.perf_counter() - started) * 1000
-        self._json_response(
-            HTTPStatus.OK, _result_body(result, total_ms, allow_sorry=allow_sorry)
-        )
+        body = _result_body(result, total_ms, allow_sorry=allow_sorry)
+        if not body["okay"]:
+            self.runtime.increment_metric("compile_semantic_failures_total")
+        self._json_response(HTTPStatus.OK, body)
 
     def _handle_verify_proof(self) -> None:
         request_json = self._request_json(allow_text_plain=True)
@@ -316,6 +321,7 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
             self._json_response(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
+        self.runtime.increment_metric("verification_requests_total")
         started = time.perf_counter()
         worker_request = VerifyWorkerRequest(
             request_id=uuid.uuid4().hex,
@@ -347,10 +353,10 @@ class LeanRequestHandler(BaseHTTPRequestHandler):
             return
 
         total_ms = (time.perf_counter() - started) * 1000
-        self._json_response(
-            HTTPStatus.OK,
-            _verify_result_body(result, total_ms=total_ms, content=request.content),
-        )
+        body = _verify_result_body(result, total_ms=total_ms, content=request.content)
+        if not body["okay"]:
+            self.runtime.increment_metric("verification_semantic_failures_total")
+        self._json_response(HTTPStatus.OK, body)
 
 
 def _result_body(

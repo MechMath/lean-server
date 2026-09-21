@@ -12,6 +12,7 @@ from lean_server.protocol import (
     WorkerResult,
 )
 
+from .metrics import MetricsSnapshot
 from .pool import CompilerPool, PoolSnapshot
 
 
@@ -57,6 +58,12 @@ class CompilerPoolRuntime:
             return self.pool.snapshot
 
         return self._submit(get_snapshot()).result()
+
+    def metrics_snapshot(self) -> MetricsSnapshot:
+        return self.pool.metrics_snapshot
+
+    def increment_metric(self, name: str) -> None:
+        self.pool.metrics.increment(name)
 
     def close(self) -> None:
         loop = self._loop

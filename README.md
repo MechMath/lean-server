@@ -28,6 +28,12 @@ Check readiness:
 curl http://127.0.0.1:8000/readyz
 ```
 
+Read process-lifetime service counters:
+
+```bash
+curl http://127.0.0.1:8000/metrics
+```
+
 Compile Lean code:
 
 ```bash

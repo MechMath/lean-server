@@ -9,6 +9,14 @@ from dataclasses import dataclass
 
 from lean_server.backend import CompilerBackend
 from lean_server.protocol import WorkerJobRequest, WorkerJobResult
+from lean_server.workers.process import (
+    WorkerExitedError,
+    WorkerMessageTooLargeError,
+    WorkerPanicError,
+    WorkerProtocolError,
+)
+
+from .metrics import MetricsSnapshot, ServiceMetrics
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +71,7 @@ class _Job:
     deadline: float
     started: bool = False
     execution_started_at: float | None = None
+    timeout_recorded: bool = False
 
 
 def _timeout_error(job: _Job) -> PoolTimeoutError:
@@ -88,6 +97,7 @@ class CompilerPool:
         queue_capacity: int,
         default_timeout_seconds: float = 30.0,
         startup_parallelism: int = 8,
+        metrics: ServiceMetrics | None = None,
     ) -> None:
         if worker_count < 1:
             raise ValueError("worker_count must be at least 1")
@@ -102,6 +112,7 @@ class CompilerPool:
         self._queue_capacity = queue_capacity
         self._default_timeout_seconds = default_timeout_seconds
         self._startup_parallelism = startup_parallelism
+        self.metrics = metrics or ServiceMetrics()
         self._queue: deque[_Job] = deque()
         self._jobs_available = asyncio.Event()
         self._backends: list[CompilerBackend] = []
@@ -122,6 +133,10 @@ class CompilerPool:
             queue_capacity=self._queue_capacity,
             replacements=self._replacements,
         )
+
+    @property
+    def metrics_snapshot(self) -> MetricsSnapshot:
+        return self.metrics.snapshot()
 
     async def start(self) -> None:
         if self._state != "created":
@@ -168,6 +183,7 @@ class CompilerPool:
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout_seconds must be finite and positive")
         if len(self._queue) >= self._queue_capacity:
+            self.metrics.increment("overload_responses_total")
             raise PoolOverloadedError("compiler queue is full")
         loop = asyncio.get_running_loop()
         future = loop.create_future()
@@ -178,6 +194,7 @@ class CompilerPool:
             async with asyncio.timeout_at(job.deadline):
                 return await future
         except TimeoutError as exc:
+            self._record_timeout(job)
             raise _timeout_error(job) from exc
         finally:
             # Expired/cancelled queued jobs must release capacity immediately, even
@@ -216,6 +233,7 @@ class CompilerPool:
                 continue
             remaining = item.deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
+                self._record_timeout(item)
                 item.future.set_exception(_timeout_error(item))
                 continue
             item.execution_started_at = asyncio.get_running_loop().time()
@@ -224,6 +242,7 @@ class CompilerPool:
             try:
                 result = await asyncio.wait_for(backend.compile(item.request), timeout=remaining)
             except TimeoutError:
+                self._record_timeout(item)
                 if not item.future.done():
                     item.future.set_exception(_timeout_error(item))
                 replace = True
@@ -232,6 +251,7 @@ class CompilerPool:
                     item.future.set_exception(PoolClosedError("pool is closing"))
                 raise
             except Exception as exc:
+                self._record_worker_failure(exc)
                 if not item.future.done():
                     item.future.set_exception(PoolWorkerError(
                         str(exc),
@@ -275,6 +295,7 @@ class CompilerPool:
                 self._backends[index] = replacement
                 await replacement.start()
             except Exception:
+                self.metrics.increment("replacement_startup_failures_total")
                 logger.exception("compiler worker replacement failed")
                 await self._close_backend(self._backends[index])
                 await asyncio.sleep(delay)
@@ -285,8 +306,30 @@ class CompilerPool:
                 raise
             self._ready_workers += 1
             self._replacements += 1
+            self.metrics.increment("worker_replacements_total")
             return replacement
         return None
+
+    def _record_timeout(self, job: _Job) -> None:
+        if job.timeout_recorded:
+            return
+        job.timeout_recorded = True
+        name = (
+            "queue_timeouts_total"
+            if job.execution_started_at is None
+            else "execution_timeouts_total"
+        )
+        self.metrics.increment(name)
+
+    def _record_worker_failure(self, exc: Exception) -> None:
+        if isinstance(exc, WorkerExitedError):
+            self.metrics.increment("worker_crashes_total")
+        if isinstance(exc, WorkerPanicError):
+            self.metrics.increment("lean_panics_total")
+        if isinstance(exc, WorkerProtocolError):
+            self.metrics.increment("worker_protocol_errors_total")
+        if isinstance(exc, WorkerMessageTooLargeError):
+            self.metrics.increment("worker_message_too_large_total")
 
     def _cancel_queued_jobs(self) -> None:
         while self._queue:
