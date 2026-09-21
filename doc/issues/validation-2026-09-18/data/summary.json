@@ -37,7 +37,6 @@
   "files": {
     "dataset": "external:reasoning_data_messages_pre_filter.jsonl",
     "axle": "external:reasoning_data_axle_lean-4.30.0_results.jsonl",
-    "local": "external:reasoning_data_local_lean-4.30.0_results.jsonl",
-    "disagreements": "data/disagreements.jsonl"
+    "local": "external:reasoning_data_local_lean-4.30.0_results.jsonl"
   }
 }

@@ -2,6 +2,7 @@
 
 ## Status
 
+- Active follow-up is tracked in [GitHub issue #8](https://github.com/MechMath/lean-server/issues/8).
 - Local follow-up: the pool now quarantines exact inputs after this typed panic
   and serializes concurrent identical inputs, preventing repeated replacement
   while the fingerprint is retained. Healthy inputs can use other workers during
@@ -70,7 +71,8 @@ isolated. A likely direction is decimal elaboration or `norm_num` constructing
 an excessively large natural-power exponent. This is a hypothesis, not a
 confirmed root cause.
 
-The complete reproducer is preserved in:
+The complete reproducer is in the external source archive (available in Git
+history before the archive cleanup):
 
 ```text
 data/disagreements.jsonl

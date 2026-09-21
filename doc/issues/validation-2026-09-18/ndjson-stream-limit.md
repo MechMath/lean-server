@@ -2,6 +2,7 @@
 
 ## Status
 
+- Active follow-up is tracked in [GitHub issue #8](https://github.com/MechMath/lean-server/issues/8).
 - Updated on 2026-09-21: stdout now has an explicit 8 MiB limit; stderr is
   drained independently in chunks with a bounded 64 KiB tail. Real replay
   also found 197,802 identical diagnostics at the same location in one result

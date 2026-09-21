@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-21",
+  "tests_passed": 103,
+  "strict_replay": {
+    "count": 4228,
+    "excluded_malformed_references": 698,
+    "outcomes": {
+      "passed": 570,
+      "rejected": 3657,
+      "infrastructure_error": 1
+    },
+    "by_historical_category": {
+      "axle_failed__local_passed": {"passed": 4, "rejected": 1194},
+      "axle_failed__local_error": {"rejected": 2463, "infrastructure_error": 1},
+      "axle_passed__local_failed": {"passed": 79},
+      "axle_passed__local_error": {"passed": 487}
+    }
+  },
+  "infrastructure_replay": {
+    "count": 2951,
+    "compiled": 500,
+    "compile_rejected": 2450,
+    "lean_panic": 1,
+    "ndjson_transport_errors": 0
+  },
+  "axle_failed_local_passed_analysis": {
+    "count": 1789,
+    "strict_rejected": 1785,
+    "strict_passed": 4,
+    "axiom_policy_records": 1116,
+    "malformed_formal_statements": 591
+  },
+  "known_infrastructure_error": {
+    "uuid": "Goedel-Pset-153949",
+    "error_type": "LeanPanic",
+    "retryable": false
+  }
+}

@@ -19,11 +19,10 @@ Generated analysis artifacts:
 
 ```text
 data/summary.json
-data/disagreements.jsonl
 ```
 
-The disagreement JSONL retains the formal statement, complete candidate,
-compact AXLE result, and compact local result for reproduction.
+The 4,926-record per-candidate working archive is intentionally not versioned;
+this directory retains only aggregate results.
 
 ## Result matrix
 
@@ -49,10 +48,10 @@ records whose status differs or is unresolved locally.
 
 ## Local infrastructure errors
 
-| Category | Count | Document |
+| Category | Count | Tracking |
 | --- | ---: | --- |
-| NDJSON response exceeds asyncio stream limit | 3,057 | `ndjson-stream-limit.md` |
-| Worker panic: `Nat.pow exponent is too big` | 1 | `nat-pow-worker-panic.md` |
+| NDJSON response exceeds asyncio stream limit | 3,057 | [GitHub #4](https://github.com/MechMath/lean-server/issues/4) |
+| Worker panic: `Nat.pow exponent is too big` | 1 | [GitHub #8](https://github.com/MechMath/lean-server/issues/8) |
 
 These 3,058 records must not be counted as Lean failures. A requested retry was
 started after the first run, but the local server was no longer accepting
@@ -87,6 +86,12 @@ module/environment drift from elaboration differences, and add representative
 fixtures to environment preflight and integration tests.
 
 ## Prioritized improvements
+
+This is the original 2026-09-18 priority list. Current status is tracked in
+[GitHub #4](https://github.com/MechMath/lean-server/issues/4),
+[#8](https://github.com/MechMath/lean-server/issues/8),
+[#9](https://github.com/MechMath/lean-server/issues/9), and
+[#11](https://github.com/MechMath/lean-server/issues/11).
 
 1. Fix the NDJSON stream limit and rerun the 3,057 affected UUIDs.
 2. Isolate and minimize the `Nat.pow` panic; prevent deterministic crash retry
