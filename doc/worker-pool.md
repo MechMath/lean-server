@@ -9,8 +9,7 @@ ThreadingHTTPServer
   -> CompilerPoolRuntime（独立 asyncio event loop）
   -> CompilerPool（有界 FIFO queue）
   -> CompilerBackend
-      |- LeanCliBackend：默认，每请求一个 Lean CLI
-      `- WorkerProcessBackend：常驻 NDJSON worker
+      `- WorkerProcessBackend：默认的常驻 NDJSON worker
 ```
 
 默认配置为 2 个 worker slot、8 个等待位置。每个 slot 最多一个 in-flight 请求；等待队列
@@ -33,13 +32,13 @@ ThreadingHTTPServer
 任一检查失败时进程以状态码 1 退出，不开放 HTTP 服务。检查成功后会打印实际 Mathlib
 revision 与耗时。
 
-使用当前可用的 Lean CLI backend：
+默认启动仓库内已构建的常驻 worker：
 
 ```bash
 uv run lean-server --workers 4 --queue-capacity 16
 ```
 
-任务 A 的常驻 Lean worker 合并后，通过命令行切换，不需要修改 HTTP 或 pool：
+也可以显式覆盖 worker 命令：
 
 ```bash
 uv run lean-server \
@@ -63,6 +62,13 @@ uv run lean-server \
 - Lean parser、elaborator 或类型错误返回 `compile_error`，不会回收 worker。
 - replacement 失败时按 50ms 到 2s 的上限指数退避，避免 respawn storm。
 - 服务关闭时取消 active 和 queued 请求，随后关闭所有 backend 和进程组。
+- 正在启动的 replacement 也由 pool 管理，取消 ready handshake 时会终止并回收进程。
+- stderr 按字节块持续读取，最多保留末尾 64 KiB（对外最多 100 行）；无换行的超长日志
+  不会中断读取。清理异常会记录日志，不会终止 worker slot 的恢复流程。
+
+`timeout_seconds` 是排队与执行共享的总预算，从请求进入 pool 开始计时。等待 worker
+重建也计入预算；排队期间超时或取消会立即释放队列位置，不会执行该任务。执行阶段只使用
+剩余预算，超时后回收相应 worker。重建中的 slot 不计入 `active_workers`。
 
 pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
 
@@ -93,6 +99,7 @@ pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
 ```
 
 当前 `queue_ms` 是 `total_ms - compile_ms`，包含很小的 transport 和调度开销。
+超时响应则根据实际出队时间分别记录等待与执行耗时；未开始执行的请求 `compile_ms` 为 0。
 
 请求可以通过 `allow_sorry` 控制是否接受包含 `sorry` 的代码：
 

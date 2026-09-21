@@ -82,6 +82,28 @@ class LeanWorkerTests(unittest.TestCase):
             recovered = worker.compile("recovered", "def answer : Nat := 42")
             self.assertEqual(recovered.status, "ok")
 
+    def test_historical_repeated_diagnostic_does_not_expand_transport(self) -> None:
+        archive = PROJECT_ROOT / "doc/issues/validation-2026-09-18/data/disagreements.jsonl"
+        with archive.open() as stream:
+            row = next(
+                record for record in map(json.loads, stream)
+                if record["uuid"] == "0ae3c609-56ae-5904-9cf3-51d4cb9d0221"
+            )
+        with Worker() as worker:
+            # Previously: 197,802 identical errors, producing a 27 MB NDJSON line.
+            result = worker.compile(row["uuid"], row["candidate"])
+            self.assertEqual(result.status, "compile_error")
+            self.assertEqual(len(result.errors), 1)
+            self.assertEqual(result.errors[0].message, "No goals to be solved")
+            self.assertEqual(worker.compile("following", "example : True := True.intro").status, "ok")
+
+    def test_identical_messages_at_distinct_locations_are_preserved(self) -> None:
+        with Worker() as worker:
+            result = worker.compile("positions", "#check missingName\n#check missingName")
+            self.assertEqual(result.status, "compile_error")
+            self.assertEqual(len(result.errors), 2)
+            self.assertEqual({item.start.line for item in result.errors}, {1, 2})
+
     def test_declarations_options_attributes_and_notation_are_isolated(self) -> None:
         with Worker() as worker:
             first = worker.compile(

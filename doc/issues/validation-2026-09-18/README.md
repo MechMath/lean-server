@@ -6,6 +6,13 @@ server.
 
 ## Contents
 
+- [`219-validation-2026-09-21.md`](219-validation-2026-09-21.md): follow-up
+  service fixes, remote tests, historical HTTP replay, and deployment status.
+- [`axle-failed-local-passed-review.md`](axle-failed-local-passed-review.md):
+  2026-09-21 diagnosis of all 1,789 AXLE-failed/local-passed records and replay
+  against the current strict verifier.
+- [`analyze_disagreements.py`](analyze_disagreements.py): reproducible diagnostic
+  classification and optional local strict-verifier replay.
 - [`batch-validation-findings.md`](batch-validation-findings.md): experiment
   scope, complete result matrix, interpretation, and prioritized improvements.
 - [`ndjson-stream-limit.md`](ndjson-stream-limit.md): 3,057 deterministic
@@ -42,6 +49,11 @@ This makes each issue independently reproducible without requiring the original
 
 ## Integrity
 
+Generated per-record classification/replay JSONL, compressed HTTP responses,
+and intermediate logs are local artifacts ignored by Git. Original archives,
+replay scripts, reports, summaries, metadata, and final test evidence are kept.
+Run the replay scripts to regenerate detailed outputs when needed.
+
 ```text
 4f69b848efed8554f837d55016a16e7917258d7f3cb12050c17b89ae7132f02f  data/summary.json
 f22b9737513e46ce8aa8909c36797945ea58932584ba12ebc8732a1faf83f026  data/disagreements.jsonl
@@ -55,8 +67,10 @@ The local `/check` endpoint and AXLE `verify_proof` do not enforce identical
 semantics. Local success means that the complete candidate elaborated in the
 pinned local environment without a reported `sorry`. AXLE additionally checks
 the candidate against the original declaration and applies stricter dependency
-policy. Implement the planned local `/verify_proof` endpoint before treating
-every AXLE-failed/local-passed record as a local verifier defect.
+policy. The implemented `/api/v1/verify_proof` endpoint supplies those additional
+checks; see the follow-up report for its deployment and validation. Do not
+interpret every historical AXLE-failed/local-passed record as a local compiler
+defect.
 
 Conversely, AXLE-passed/local-failed and AXLE-passed/local-error records are
 direct local compatibility or infrastructure regression sets and should be

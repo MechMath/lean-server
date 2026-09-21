@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from lean_server.backend import CompilerBackend
-from lean_server.protocol import WorkerRequest, WorkerResult
+from lean_server.protocol import WorkerJobRequest, WorkerJobResult
+
+
+logger = logging.getLogger(__name__)
 
 
 class PoolError(RuntimeError):
@@ -21,11 +27,21 @@ class PoolOverloadedError(PoolError):
 
 
 class PoolTimeoutError(PoolError):
-    """A compiler request exceeded its wall-clock execution timeout."""
+    """A compiler request exceeded its total queue and execution budget."""
+
+    def __init__(self, message: str, *, queue_ms: float = 0, compile_ms: float = 0) -> None:
+        super().__init__(message)
+        self.queue_ms = queue_ms
+        self.compile_ms = compile_ms
 
 
 class PoolWorkerError(PoolError):
     """A worker failed and its process slot is being replaced."""
+
+    def __init__(self, message: str, *, retryable: bool = True, error_type: str | None = None):
+        super().__init__(message)
+        self.retryable = retryable
+        self.error_type = error_type
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,12 +57,24 @@ class PoolSnapshot:
 
 @dataclass(slots=True)
 class _Job:
-    request: WorkerRequest
-    future: asyncio.Future[WorkerResult]
+    request: WorkerJobRequest
+    future: asyncio.Future[WorkerJobResult]
     timeout_seconds: float
+    deadline: float
+    started: bool = False
+    execution_started_at: float | None = None
 
 
-_STOP = object()
+def _timeout_error(job: _Job) -> PoolTimeoutError:
+    now = asyncio.get_running_loop().time()
+    enqueued_at = job.deadline - job.timeout_seconds
+    execution_started_at = job.execution_started_at
+    return PoolTimeoutError(
+        f"request exceeded {job.timeout_seconds:g} seconds including queue wait",
+        queue_ms=((execution_started_at if execution_started_at is not None else now) - enqueued_at)
+        * 1000,
+        compile_ms=0 if execution_started_at is None else (now - execution_started_at) * 1000,
+    )
 
 
 class CompilerPool:
@@ -65,8 +93,8 @@ class CompilerPool:
             raise ValueError("worker_count must be at least 1")
         if queue_capacity < 1:
             raise ValueError("queue_capacity must be at least 1")
-        if default_timeout_seconds <= 0:
-            raise ValueError("default_timeout_seconds must be positive")
+        if not math.isfinite(default_timeout_seconds) or default_timeout_seconds <= 0:
+            raise ValueError("default_timeout_seconds must be finite and positive")
         if startup_parallelism < 1:
             raise ValueError("startup_parallelism must be at least 1")
         self._backend_factory = backend_factory
@@ -74,7 +102,8 @@ class CompilerPool:
         self._queue_capacity = queue_capacity
         self._default_timeout_seconds = default_timeout_seconds
         self._startup_parallelism = startup_parallelism
-        self._queue: asyncio.Queue[_Job | object] = asyncio.Queue(maxsize=queue_capacity)
+        self._queue: deque[_Job] = deque()
+        self._jobs_available = asyncio.Event()
         self._backends: list[CompilerBackend] = []
         self._tasks: list[asyncio.Task[None]] = []
         self._state = "created"
@@ -89,7 +118,7 @@ class CompilerPool:
             worker_count=self._worker_count,
             ready_workers=self._ready_workers,
             active_workers=self._active_workers,
-            queue_depth=self._queue.qsize(),
+            queue_depth=len(self._queue),
             queue_capacity=self._queue_capacity,
             replacements=self._replacements,
         )
@@ -131,21 +160,30 @@ class CompilerPool:
         self._state = "running"
 
     async def compile(
-        self, request: WorkerRequest, *, timeout_seconds: float | None = None
-    ) -> WorkerResult:
+        self, request: WorkerJobRequest, *, timeout_seconds: float | None = None
+    ) -> WorkerJobResult:
         if self._state != "running":
             raise PoolClosedError(f"pool is {self._state}")
         timeout = self._default_timeout_seconds if timeout_seconds is None else timeout_seconds
-        if timeout <= 0:
-            raise ValueError("timeout_seconds must be positive")
-        future = asyncio.get_running_loop().create_future()
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout_seconds must be finite and positive")
+        if len(self._queue) >= self._queue_capacity:
+            raise PoolOverloadedError("compiler queue is full")
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        job = _Job(request, future, float(timeout), loop.time() + timeout)
+        self._queue.append(job)
+        self._jobs_available.set()
         try:
-            self._queue.put_nowait(
-                _Job(request=request, future=future, timeout_seconds=float(timeout))
-            )
-        except asyncio.QueueFull as exc:
-            raise PoolOverloadedError("compiler queue is full") from exc
-        return await future
+            async with asyncio.timeout_at(job.deadline):
+                return await future
+        except TimeoutError as exc:
+            raise _timeout_error(job) from exc
+        finally:
+            # Expired/cancelled queued jobs must release capacity immediately, even
+            # when every worker is stuck restarting and cannot dequeue them.
+            if not job.started and job in self._queue:
+                self._queue.remove(job)
 
     async def close(self) -> None:
         if self._state == "closed":
@@ -169,86 +207,89 @@ class CompilerPool:
 
     async def _run_worker(self, index: int, backend: CompilerBackend) -> None:
         while True:
-            item = await self._queue.get()
+            while not self._queue:
+                self._jobs_available.clear()
+                await self._jobs_available.wait()
+            item = self._queue.popleft()
+            item.started = True
+            if item.future.done():
+                continue
+            remaining = item.deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                item.future.set_exception(_timeout_error(item))
+                continue
+            item.execution_started_at = asyncio.get_running_loop().time()
+            self._active_workers += 1
+            replace = False
             try:
-                if item is _STOP:
-                    return
-                assert isinstance(item, _Job)
-                if item.future.cancelled():
-                    continue
-                self._active_workers += 1
-                try:
-                    result = await asyncio.wait_for(
-                        backend.compile(item.request), timeout=item.timeout_seconds
-                    )
-                except TimeoutError:
+                result = await asyncio.wait_for(backend.compile(item.request), timeout=remaining)
+            except TimeoutError:
+                if not item.future.done():
+                    item.future.set_exception(_timeout_error(item))
+                replace = True
+            except asyncio.CancelledError:
+                if not item.future.done():
+                    item.future.set_exception(PoolClosedError("pool is closing"))
+                raise
+            except Exception as exc:
+                if not item.future.done():
+                    item.future.set_exception(PoolWorkerError(
+                        str(exc),
+                        retryable=getattr(exc, "retryable", True),
+                        error_type=getattr(exc, "error_type", None),
+                    ))
+                replace = True
+            else:
+                if result.status == "internal_error":
                     if not item.future.done():
-                        item.future.set_exception(
-                            PoolTimeoutError(
-                                f"request exceeded {item.timeout_seconds:g} seconds"
-                            )
-                        )
-                    replacement = await self._replace_backend(index, backend)
-                    if replacement is None:
-                        return
-                    backend = replacement
-                except asyncio.CancelledError:
-                    if not item.future.done():
-                        item.future.set_exception(PoolClosedError("pool is closing"))
-                    raise
-                except Exception as exc:
-                    if not item.future.done():
-                        item.future.set_exception(PoolWorkerError(str(exc)))
-                    replacement = await self._replace_backend(index, backend)
-                    if replacement is None:
-                        return
-                    backend = replacement
-                else:
-                    if result.status == "internal_error":
-                        if not item.future.done():
-                            item.future.set_exception(
-                                PoolWorkerError("worker returned internal_error")
-                            )
-                        replacement = await self._replace_backend(index, backend)
-                        if replacement is None:
-                            return
-                        backend = replacement
-                    elif not item.future.done():
-                        item.future.set_result(result)
-                finally:
-                    self._active_workers -= 1
+                        item.future.set_exception(PoolWorkerError("worker returned internal_error"))
+                    replace = True
+                elif not item.future.done():
+                    item.future.set_result(result)
             finally:
-                self._queue.task_done()
+                self._active_workers -= 1
+            if replace:
+                replacement = await self._replace_backend(index, backend)
+                if replacement is None:
+                    return
+                backend = replacement
+
+    async def _close_backend(self, backend: CompilerBackend) -> None:
+        try:
+            await backend.close()
+        except Exception:
+            # A failed log drain or cleanup must not silently kill this slot.
+            logger.exception("compiler worker cleanup failed")
 
     async def _replace_backend(
         self, index: int, backend: CompilerBackend
     ) -> CompilerBackend | None:
         self._ready_workers -= 1
-        await backend.close()
+        await self._close_backend(backend)
         delay = 0.05
         while self._state == "running":
-            replacement = self._backend_factory()
             try:
+                replacement = self._backend_factory()
+                # Track ownership before awaiting ready, so shutdown also owns
+                # partially started replacements.
+                self._backends[index] = replacement
                 await replacement.start()
             except Exception:
-                await replacement.close()
+                logger.exception("compiler worker replacement failed")
+                await self._close_backend(self._backends[index])
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 2.0)
                 continue
-            self._backends[index] = replacement
+            except asyncio.CancelledError:
+                await self._close_backend(self._backends[index])
+                raise
             self._ready_workers += 1
             self._replacements += 1
             return replacement
         return None
 
     def _cancel_queued_jobs(self) -> None:
-        while True:
-            try:
-                item = self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                return
-            try:
-                if isinstance(item, _Job) and not item.future.done():
-                    item.future.set_exception(PoolClosedError("pool is closing"))
-            finally:
-                self._queue.task_done()
+        while self._queue:
+            item = self._queue.popleft()
+            if not item.future.done():
+                item.future.set_exception(PoolClosedError("pool is closing"))

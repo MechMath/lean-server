@@ -5,7 +5,12 @@ import threading
 from concurrent.futures import Future
 from typing import Any, Coroutine
 
-from lean_server.protocol import WorkerRequest, WorkerResult
+from lean_server.protocol import (
+    VerifyWorkerRequest,
+    VerifyWorkerResult,
+    WorkerRequest,
+    WorkerResult,
+)
 
 from .pool import CompilerPool, PoolSnapshot
 
@@ -33,7 +38,19 @@ class CompilerPoolRuntime:
 
     def compile(self, request: WorkerRequest, *, timeout_seconds: float) -> WorkerResult:
         future = self._submit(self.pool.compile(request, timeout_seconds=timeout_seconds))
-        return future.result()
+        result = future.result()
+        if not isinstance(result, WorkerResult):
+            raise RuntimeError("compiler pool returned a verification result for compile request")
+        return result
+
+    def verify(
+        self, request: VerifyWorkerRequest, *, timeout_seconds: float
+    ) -> VerifyWorkerResult:
+        future = self._submit(self.pool.compile(request, timeout_seconds=timeout_seconds))
+        result = future.result()
+        if not isinstance(result, VerifyWorkerResult):
+            raise RuntimeError("compiler pool returned a compile result for verification request")
+        return result
 
     def snapshot(self) -> PoolSnapshot:
         async def get_snapshot() -> PoolSnapshot:

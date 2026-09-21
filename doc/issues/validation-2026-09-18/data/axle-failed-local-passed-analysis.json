@@ -1,0 +1,66 @@
+{
+  "archive_sha256": "f22b9737513e46ce8aa8909c36797945ea58932584ba12ebc8732a1faf83f026",
+  "disagreements": 4926,
+  "categories": {
+    "axle_passed__local_error": 487,
+    "axle_failed__local_error": 2571,
+    "axle_failed__local_passed": 1789,
+    "axle_passed__local_failed": 79
+  },
+  "target_count": 1789,
+  "target_unique_uuids": 1789,
+  "exclusive_reasons": {
+    "axiom_policy": 1115,
+    "axiom_policy+signature_mismatch": 1,
+    "axle_timeout": 2,
+    "formal_statement_compile_error": 591,
+    "input_validation_error": 8,
+    "missing_declaration": 34,
+    "no_formal_declaration": 10,
+    "signature_mismatch": 28
+  },
+  "axiom_policy_subtypes_including_overlap": {
+    "native_decide": 1113,
+    "decide_native": 2,
+    "custom_axioms": 1
+  },
+  "examples": {
+    "axiom_policy": [
+      "5d555352-9c40-5b1f-8eca-5658456d5b84",
+      "e122d56e-fb4d-5017-90e1-1747995d50a1",
+      "6bdc5ec1-b6ac-55ce-9873-f445496824fd"
+    ],
+    "axiom_policy+signature_mismatch": [
+      "55395588-b607-5a27-93a4-ff6d39334342"
+    ],
+    "axle_timeout": [
+      "MeasureTheory.Measure.noAtoms_hausdorff.lean",
+      "MeasureTheory.Measure.hausdorffMeasure_le_one_of_subsingleton.lean"
+    ],
+    "formal_statement_compile_error": [
+      "Goedel-Pset-1228570",
+      "Goedel-Pset-506059",
+      "april-feedback-acbb981e984fcfe7b451fb893dfbe9cf-normal"
+    ],
+    "input_validation_error": [
+      "116c957b-7e47-5409-85b3-2b4e528602f8",
+      "314788de-8938-5ba0-9866-6db638522252",
+      "21dfb2c3-73a9-51e7-af46-25404325cd24"
+    ],
+    "missing_declaration": [
+      "20d5e25a-c54b-5c24-876e-74a05ebae065",
+      "2e67727a-c48e-5d5d-b2d9-5a2a0a38beff",
+      "Goedel-Pset-1244284"
+    ],
+    "no_formal_declaration": [
+      "febe69e9-e9cf-5f46-92ac-812ff5ad6aad",
+      "882e700c-51fa-5af1-adf6-84dfb6a880be",
+      "417a2170-a03e-566e-a0dc-a85bbce39433"
+    ],
+    "signature_mismatch": [
+      "a5d78e46-cc32-58fa-a71b-d190580d8e92",
+      "544406e3-691d-5671-8d96-9f5c90c22691",
+      "39d39de1-88b8-5478-9d6c-cf79bffc1597"
+    ]
+  }
+}

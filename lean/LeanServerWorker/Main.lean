@@ -1,4 +1,4 @@
-import LeanServerWorker.Compiler
+import LeanServerWorker.Verifier
 
 namespace LeanServerWorker
 
@@ -15,8 +15,8 @@ private def writeMessage (stdout : IO.FS.Stream) (json : Json) : IO Unit := do
   stdout.putStrLn json.compress
   stdout.flush
 
-private def handleRequest (baseEnv : Environment) (options : Options) (stdout : IO.FS.Stream)
-    (request : Request) : IO Unit := do
+private def handleCompileRequest (baseEnv : Environment) (options : Options)
+    (stdout : IO.FS.Stream) (request : CompileRequest) : IO Unit := do
   let started ← IO.monoNanosNow
   try
     let output ← compileCode baseEnv options request.code
@@ -29,6 +29,29 @@ private def handleRequest (baseEnv : Environment) (options : Options) (stdout : 
     let diagnostic := internalErrorDiagnostic exception.toString
     writeMessage stdout <| resultJson request.requestId .internalError
       (elapsedMilliseconds started finished) #[] #[diagnostic]
+
+private def handleVerifyRequest (baseEnv : Environment) (options : Options)
+    (stdout : IO.FS.Stream) (request : VerifyRequest) : IO Unit := do
+  let started ← IO.monoNanosNow
+  try
+    let output ← verifyProof baseEnv options request.formalStatement request.content
+      request.useDefEq
+    let finished ← IO.monoNanosNow
+    let status := if output.errors.isEmpty then ResultStatus.ok else ResultStatus.compileError
+    writeMessage stdout <| verifyResultJson request.requestId status
+      (elapsedMilliseconds started finished) output.formalStatementMs output.candidateMs
+      output.declarationsMs output.warnings output.errors output.toolErrors
+      output.failedDeclarations
+  catch exception =>
+    let finished ← IO.monoNanosNow
+    let diagnostic := internalErrorDiagnostic exception.toString
+    writeMessage stdout <| verifyResultJson request.requestId .internalError
+      (elapsedMilliseconds started finished) 0 0 0 #[] #[diagnostic] #[] #[]
+
+private def handleRequest (baseEnv : Environment) (options : Options) (stdout : IO.FS.Stream) :
+    Request → IO Unit
+  | .compile request => handleCompileRequest baseEnv options stdout request
+  | .verify request => handleVerifyRequest baseEnv options stdout request
 
 private partial def requestLoop (baseEnv : Environment) (options : Options)
     (stdin stdout : IO.FS.Stream) : IO Unit := do
