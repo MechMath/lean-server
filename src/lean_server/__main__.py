@@ -15,7 +15,10 @@ def main() -> None:
     parser.add_argument("--queue-capacity", default=8, type=int)
     parser.add_argument(
         "--worker-command",
-        help="NDJSON worker command; defaults to one Lean CLI process per request",
+        help=(
+            "NDJSON worker command; defaults to "
+            "'lake env .lake/build/bin/lean-server-worker'"
+        ),
     )
     parser.add_argument(
         "--worker-startup-timeout",

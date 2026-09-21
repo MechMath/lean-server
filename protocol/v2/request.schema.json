@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lean-server.local/protocol/v2/request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "type",
+    "request_id",
+    "formal_statement",
+    "content",
+    "use_def_eq"
+  ],
+  "properties": {
+    "protocol_version": {"const": 2},
+    "type": {"const": "verify"},
+    "request_id": {"type": "string", "minLength": 1},
+    "formal_statement": {"type": "string"},
+    "content": {"type": "string"},
+    "use_def_eq": {"type": "boolean"}
+  }
+}
+

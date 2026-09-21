@@ -3,3 +3,10 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Local Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Local validation work products
+/doc/issues/**/work/
