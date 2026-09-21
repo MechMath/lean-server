@@ -19,11 +19,10 @@ Generated analysis artifacts:
 
 ```text
 data/summary.json
-data/disagreements.jsonl
 ```
 
-The disagreement JSONL retains the formal statement, complete candidate,
-compact AXLE result, and compact local result for reproduction.
+The 4,926-record per-candidate working archive is intentionally not versioned;
+this directory retains only aggregate results.
 
 ## Result matrix
 
