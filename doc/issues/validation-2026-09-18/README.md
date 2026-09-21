@@ -15,30 +15,27 @@ server.
   classification and optional local strict-verifier replay.
 - [`batch-validation-findings.md`](batch-validation-findings.md): experiment
   scope, complete result matrix, interpretation, and prioritized improvements.
-- [`ndjson-stream-limit.md`](ndjson-stream-limit.md): 3,057 deterministic
-  persistent-worker transport failures caused by the NDJSON stream limit.
-- [`nat-pow-worker-panic.md`](nat-pow-worker-panic.md): one worker crash caused
-  by `INTERNAL PANIC: Nat.pow exponent is too big`.
 - [`data/summary.json`](data/summary.json): machine-readable aggregate counts
   and infrastructure-error taxonomy.
 - `data/disagreements.jsonl`: all 4,926 records whose latest AXLE and local
   statuses differ. It is intentionally not linked inline because it is 43 MiB.
 
-## Follow-up status (2026-09-21)
+## GitHub tracking
 
-| Finding from the 2026-09-18 run | Status | Evidence / remaining work |
+Active work and closure state now live in GitHub rather than separate issue
+documents in this archive.
+
+| Topic | Status | GitHub issue |
 | --- | --- | --- |
-| 3,057 NDJSON stream-limit failures | **Fixed** | The transport now accepts 8 MiB messages and duplicate diagnostics are collapsed. All 2,950 replayed non-excluded cases returned semantic results with no transport error; 107 malformed-reference cases were deliberately excluded. |
-| One `Nat.pow exponent is too big` worker panic | **Mitigated** | The server identifies it as non-retryable `LeanPanic` and restores pool capacity. The Lean 4.30 panic itself still occurs and remains an infrastructure outcome. |
-| 79 AXLE-pass/local-fail records | **Resolved in replay** | All 79 passed strict verification after import handling and the two long-running cases were rerun with a 600-second budget. |
-| 1,789 AXLE-fail/local-pass records lacked strict local comparison | **Resolved for the supported API contract** | `/api/v1/verify_proof` rejected 1,785 and accepted four documented timeout/compatibility cases. Exact AXLE input-contract parity is not claimed. |
-| Batch observability counters requested in the findings | **Open** | The branch improves typed errors and timing breakdowns but does not add the requested aggregate compile/timeout/crash/protocol/replacement/retry counters. |
-| Invalid formal-statement extraction | **Out of scope** | 698 malformed-reference records were excluded by request; the extraction implementation is not in this repository. |
+| Strict verification, NDJSON repair, pool hardening, and historical replay | Completed by PR #3; closes on merge | [#4](https://github.com/MechMath/lean-server/issues/4) |
+| `Nat.pow` panic, responses above 8 MiB, and very slow verification | Open | [#8](https://github.com/MechMath/lean-server/issues/8) |
+| Batch and worker-pool observability | Open | [#9](https://github.com/MechMath/lean-server/issues/9) |
+| AXLE compatibility and `/check` import semantics | Needs decision | [#11](https://github.com/MechMath/lean-server/issues/11) |
 
 Detailed counts and deployment evidence are in
-[`219-validation-2026-09-21.md`](219-validation-2026-09-21.md). The remaining
-server-side work is therefore the underlying `Nat.pow` panic and batch
-observability; exact AXLE compatibility requires a separate product decision.
+[`219-validation-2026-09-21.md`](219-validation-2026-09-21.md). The 698 malformed
+formal statements remain excluded because their extraction implementation is
+outside this repository.
 
 ## Result matrix
 

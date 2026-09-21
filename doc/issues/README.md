@@ -1,8 +1,21 @@
-# Validation issue archive
+# Validation evidence archive
 
 This directory stores reproducible feedback collected from large-scale Lean
 server validation runs. Each run has its own dated directory containing the
-analysis, issue descriptions, summary data, and complete disagreement records.
+analysis, summary data, and complete disagreement records.
+
+Active work is tracked in [GitHub Issues](https://github.com/MechMath/lean-server/issues),
+not in standalone issue documents here. The current tracking set is intentionally
+small:
+
+- [#4](https://github.com/MechMath/lean-server/issues/4): strict verification,
+  worker hardening, and validation replay completed by PR #3;
+- [#8](https://github.com/MechMath/lean-server/issues/8): remaining worker
+  reliability and resource-boundary work;
+- [#9](https://github.com/MechMath/lean-server/issues/9): batch and worker-pool
+  observability;
+- [#11](https://github.com/MechMath/lean-server/issues/11): AXLE compatibility
+  and import-handling decisions.
 
 ## Runs
 
