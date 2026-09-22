@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lean-server.local/protocol/http/verify-proof-request.schema.json",
+  "title": "POST /verify_proof — supported semantic verification subset",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formal_statement", "content", "environment"],
+  "properties": {
+    "formal_statement": {
+      "type": "string",
+      "description": "Must elaborate to at least one verifiable declaration. Complete proofs are accepted; a sorry placeholder is not required. Invalid or target-free statements skip candidate elaboration."
+    },
+    "content": {"type": "string", "description": "Elaborated independently in the fixed Mathlib environment; target dependencies must satisfy the strict axiom and sorry policy."},
+    "environment": {"type": "string", "const": "lean-4.30.0"},
+    "use_def_eq": {
+      "type": "boolean", "default": true,
+      "description": "Compare elaborated expressions by definitional equality, including optParam Nat 60 versus Nat. False selects structural expression equality after universe-parameter normalization, not source-text equality."
+    },
+    "permitted_sorries": {"type": "array", "items": {"type": "string"}, "const": [], "default": []},
+    "mathlib_options": {"type": "boolean", "const": false, "default": false},
+    "global_options": {"type": "object", "const": {}, "default": {}},
+    "verify_negation": {"type": "boolean", "const": false, "default": false},
+    "ignore_imports": {
+      "type": "boolean", "const": true, "default": true,
+      "description": "Both inputs use the preloaded Mathlib environment. Requested import module names are ignored; no requested module is dynamically loaded."
+    },
+    "timeout_seconds": {
+      "type": "number", "exclusiveMinimum": 0,
+      "description": "Finite total queue-and-execution budget. Omission uses the deployment default (600 seconds unless configured); the deployment maximum is enforced by the server."
+    }
+  }
+}

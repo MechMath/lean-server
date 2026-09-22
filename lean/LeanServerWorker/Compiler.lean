@@ -8,10 +8,41 @@ open Lean
 structure CompileOutput where
   warnings : Array Diagnostic := #[]
   errors : Array Diagnostic := #[]
+  timings : ElaborationTimings := {}
+
+structure ProfilingConfig where
+  directory : Option System.FilePath := none
+  slowMs : Nat := 1000
+  thresholdMs : Nat := 10
+  requestId : String := ""
 
 structure ElaborationOutput extends CompileOutput where
   env : Environment
   commands : Array Syntax := #[]
+
+private def elapsedMilliseconds (started finished : Nat) : Float :=
+  (finished - started).toFloat / 1000000.0
+
+private def saveSlowProfile (config : ProfilingConfig) (options : Options)
+    (fileName : String) (started : Nat) (elapsedMs : Float)
+    (state : Elab.IncrementalState) : IO Unit := do
+  let some directory := config.directory | return
+  if elapsedMs < config.slowMs.toFloat then return
+  try
+    let traces := (Language.toSnapshotTree state.initialSnap).getAll.map (·.traces)
+    let profile ← Firefox.Profile.export s!"{config.requestId} {fileName}"
+      (started.toFloat / 1000000000.0) traces options
+    IO.FS.createDirAll directory
+    -- Only worker-generated components enter the file name, never request IDs or source paths.
+    let path := directory / s!"lean-{← IO.Process.getPID}-{started}.json"
+    IO.FS.writeFile path (toJson profile).compress
+    IO.eprintln <| (Json.mkObj [
+      ("type", toJson "lean_profile"), ("request_id", toJson config.requestId),
+      ("phase", toJson fileName), ("elaboration_ms", toJson elapsedMs),
+      ("path", toJson path.toString)]).compress
+  catch exception =>
+    -- Observability failures must not change compilation or verification results.
+    IO.eprintln s!"lean-server-worker: profile export failed: {exception}"
 
 private def validPosition (position : Position) : Option Position :=
   if position.line == 0 then none else some position
@@ -64,12 +95,22 @@ private def validateImports (baseEnv : Environment) (header : Elab.HeaderSyntax)
       some s!"unknown module '{requestedImport.module}' in fixed Mathlib environment"
 
 def elaborateCode (baseEnv : Environment) (options : Options) (code : String)
-    (fileName := "<stdin>") (validateRequestedImports := true) : IO ElaborationOutput := do
+    (fileName := "<stdin>") (validateRequestedImports := true)
+    (profiling : ProfilingConfig := {}) : IO ElaborationOutput := do
+  let started ← IO.monoNanosNow
+  let options := if profiling.directory.isSome then
+      options.setBool `trace.profiler true
+        |>.set `trace.profiler.threshold profiling.thresholdMs
+        |>.setBool `trace.profiler.output.pp true
+        |>.set `trace.profiler.output "<worker-managed-profile>"
+    else options
   let inputContext := Parser.mkInputContext code fileName
   let (header, parserState, headerMessages) ← Parser.parseHeader inputContext
   if let some importError :=
       if validateRequestedImports then validateImports baseEnv header else none then
+    let headerFinished ← IO.monoNanosNow
     let headerOutput ← diagnosticsFromMessages headerMessages
+    let diagnosticsFinished ← IO.monoNanosNow
     return {
       warnings := headerOutput.warnings
       errors := headerOutput.errors.push {
@@ -79,13 +120,41 @@ def elaborateCode (baseEnv : Environment) (options : Options) (code : String)
         startPos := some { line := 1, column := 0 }
       }
       env := baseEnv
+      timings := {
+        headerMs := elapsedMilliseconds started headerFinished
+        diagnosticsMs := elapsedMilliseconds headerFinished diagnosticsFinished
+      }
     }
+  let headerFinished ← IO.monoNanosNow
   let commandState := Elab.Command.mkState baseEnv headerMessages options
-  let state ← Lean.Elab.IO.processCommands inputContext parserState commandState
+  let (state, profileState?) ← if profiling.directory.isSome then do
+      let state ← Elab.IO.processCommandsIncrementally inputContext parserState commandState none
+      pure (state.toState, some state)
+    else do
+      let state ← Elab.IO.processCommands inputContext parserState commandState
+      pure (state, none)
+  let elaborationFinished ← IO.monoNanosNow
   let output ← diagnosticsFromMessages state.commandState.messages
-  return { output with env := state.commandState.env, commands := state.commands }
+  let diagnosticsFinished ← IO.monoNanosNow
+  let elaborationMs := elapsedMilliseconds headerFinished elaborationFinished
+  let mut profilingMs := 0
+  if let some profileState := profileState? then
+    if elaborationMs >= profiling.slowMs.toFloat then
+      saveSlowProfile profiling options fileName headerFinished elaborationMs profileState
+      profilingMs := elapsedMilliseconds diagnosticsFinished (← IO.monoNanosNow)
+  return { output with
+    env := state.commandState.env
+    commands := state.commands
+    timings := {
+      headerMs := elapsedMilliseconds started headerFinished
+      elaborationMs
+      diagnosticsMs := elapsedMilliseconds elaborationFinished diagnosticsFinished
+      profilingMs
+    }
+  }
 
-def compileCode (baseEnv : Environment) (options : Options) (code : String) : IO CompileOutput := do
-  return (← elaborateCode baseEnv options code).toCompileOutput
+def compileCode (baseEnv : Environment) (options : Options) (code : String)
+    (profiling : ProfilingConfig := {}) : IO CompileOutput := do
+  return (← elaborateCode baseEnv options code (profiling := profiling)).toCompileOutput
 
 end LeanServerWorker

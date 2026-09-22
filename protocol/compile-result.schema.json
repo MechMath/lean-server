@@ -3,24 +3,86 @@
   "$id": "https://lean-server.local/protocol/compile-result.schema.json",
   "$defs": {
     "position": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["line", "column"],
+      "required": [
+        "line",
+        "column"
+      ],
       "properties": {
-        "line": {"type": "integer", "minimum": 1},
-        "column": {"type": "integer", "minimum": 0}
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "diagnostic": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["severity", "message", "file_name", "start", "end"],
+      "required": [
+        "severity",
+        "message",
+        "file_name",
+        "start",
+        "end"
+      ],
       "properties": {
-        "severity": {"enum": ["warning", "error"]},
-        "message": {"type": "string"},
-        "file_name": {"type": ["string", "null"]},
-        "start": {"$ref": "#/$defs/position"},
-        "end": {"$ref": "#/$defs/position"}
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "file_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        }
+      }
+    },
+    "elaborationTimings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "header_ms",
+        "elaboration_ms",
+        "diagnostics_ms",
+        "profiling_ms"
+      ],
+      "properties": {
+        "header_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "elaboration_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "diagnostics_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "profiling_ms": {
+          "type": "number",
+          "minimum": 0
+        }
       }
     }
   },
@@ -36,12 +98,41 @@
     "errors"
   ],
   "properties": {
-    "protocol_version": {"const": 2},
-    "type": {"const": "result"},
-    "request_id": {"type": "string", "minLength": 1},
-    "status": {"enum": ["ok", "compile_error", "internal_error"]},
-    "compile_ms": {"type": "number", "minimum": 0},
-    "warnings": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}},
-    "errors": {"type": "array", "items": {"$ref": "#/$defs/diagnostic"}}
+    "protocol_version": {
+      "const": 2
+    },
+    "type": {
+      "const": "result"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "compile_error",
+        "internal_error"
+      ]
+    },
+    "compile_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "timings": {
+      "$ref": "#/$defs/elaborationTimings"
+    }
   }
 }

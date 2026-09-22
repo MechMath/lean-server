@@ -392,6 +392,7 @@ def _result_body(
             "total_ms": total_ms,
             "queue_ms": queue_ms,
             "compile_ms": result.compile_ms,
+            **({"compilation": asdict(result.timings)} if result.timings is not None else {}),
         },
     }
 
@@ -408,6 +409,7 @@ def _verify_result_body(
         and not lean_errors
         and not tool_errors
         and not failed_declarations
+        and not result.comparison_errors
     )
     return {
         "okay": okay,
@@ -427,8 +429,13 @@ def _verify_result_body(
             "formal_statement_ms": result.formal_statement_ms,
             "declarations_ms": result.declarations_ms,
             "candidate_ms": result.candidate_ms,
+            **({"formal_statement": asdict(result.formal_timings)}
+               if result.formal_timings is not None else {}),
+            **({"candidate": asdict(result.candidate_timings)}
+               if result.candidate_timings is not None else {}),
         },
         "failed_declarations": failed_declarations,
+        "comparison_errors": [asdict(error) for error in result.comparison_errors],
     }
 
 

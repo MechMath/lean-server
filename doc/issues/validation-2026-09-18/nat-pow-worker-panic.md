@@ -7,7 +7,7 @@
   and serializes concurrent identical inputs, preventing repeated replacement
   while the fingerprint is retained. Healthy inputs can use other workers during
   replacement. The bounded, process-local quarantine and its restart/eviction
-  limits are documented in [worker-pool.md](../../worker-pool.md#崩溃输入隔离).
+  limits are documented in [worker-pool.md](../../worker-pool.md#panic-quarantine).
   This does not repair the underlying panic or establish a minimized reproducer.
 - Mitigated on 2026-09-21: this known panic returns HTTP 503 with
   `error_type: "LeanPanic"` and `retryable: false`; the pool replaces the crashed

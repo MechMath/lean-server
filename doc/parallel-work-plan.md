@@ -1,92 +1,86 @@
-# Lean Server 并行开发拆分
+# Lean Server parallel work plan
 
-## 固定边界
+## Shared boundary
 
-两条任务通过 `protocol/` 中的统一 NDJSON 协议通信。以下文件是共同维护的接口边界：
+Both tasks use the NDJSON protocol in `protocol/`. Shared interfaces:
 
 - `protocol/**`
 - `src/lean_server/protocol.py`
 - `src/lean_server/backend.py`
 - `tests/contract/**`
 
-协议修改需要同步更新 Lean worker、Python decoder、schema 和契约测试。所有消息使用
-同一个 `protocol_version`，通过 `type` 区分编译和证明验证，不按功能拆分版本。
-Python 与 Lean worker 必须配套更新；部署要求见 `protocol/README.md`。
+Protocol changes must update Lean, Python decoding, schemas and contract tests
+together. One `protocol_version` covers all operations; `type` selects compilation
+or verification. Deploy Python and Lean together; see `protocol/README.md`.
 
-## 任务 A：优化 Lean 部分
+## Task A: Lean worker
 
-### 独占修改范围
+### Owned files
 
 - `lean/**`
 - `tests/lean/**`
-- 必要的 Lake target 配置
+- Required Lake executable target configuration.
 
-不修改 Python HTTP、队列、pool 或 supervisor。除添加 Lean executable target 外，不修改
-根目录 Python 配置。
+Do not change Python HTTP, queues, pools, supervisors or root Python configuration.
 
-### 交付内容
+### Deliverables
 
-1. 实现 `lean-server-worker` 常驻 executable。
-2. 启动时加载 Lean 4.30.0 和 Mathlib 4.30.0，完成后输出 `ready`。
-3. 逐行读取 `compile`，逐行输出对应 `result`。
-4. 从同一个干净 base environment 编译每次请求，不能让声明、option、attribute 或 notation
-   泄漏到后续请求。
-5. 使用 Lean 自己的结构化 message 数据生成 warning/error 和源码位置。
-6. stdout 不输出调试信息；日志只能写 stderr。
-7. 增加协议 golden tests、连续请求隔离测试，以及至少 100 次顺序请求测试。
-8. 记录冷启动、首请求和预热后请求耗时。
+1. A persistent `lean-server-worker` executable.
+2. Preload Lean/Mathlib 4.30.0 and emit `ready`.
+3. Read `compile` and emit matching `result`, one message per line.
+4. Start each request from a clean base; prevent declaration, option, attribute and notation leaks.
+5. Produce diagnostics and source positions from Lean's structured messages.
+6. Keep logs on stderr and stdout protocol-only.
+7. Add protocol golden tests, isolation tests and at least 100 sequential requests.
+8. Record cold-start, first-request and warm-request timings.
 
-### 验收条件
+### Acceptance
 
-- `import Mathlib` 的正确代码返回 `ok`。
-- parser、elaborator 和类型错误返回 `compile_error`，worker 不退出。
-- warning 不导致失败。
-- 连续请求无法访问前一请求声明。
-- worker 输出通过 `tests/contract` 中的 worker decoder。
+- Correct `import Mathlib` code returns `ok`.
+- Parser, elaborator and type errors return `compile_error` without exiting.
+- Warnings do not fail compilation.
+- Requests cannot access prior declarations.
+- Output passes the decoder in `tests/contract`.
 
-## 任务 B：优化并行与接口调度
+## Task B: Scheduling and HTTP
 
-### 独占修改范围
+### Owned files
 
 - `src/lean_server/service/**`
 - `src/lean_server/workers/**`
-- `src/lean_server/http.py`、`src/lean_server/__main__.py`
+- `src/lean_server/http.py`, `src/lean_server/__main__.py`
 - `tests/service/**`
 
-不修改 `lean/**`。开发和 CI 使用一个实现统一协议的 fake worker，因此不依赖任务 A 是否已经
-完成。
+Do not change `lean/**`. Use a protocol-compatible fake worker for development
+and CI, independent of task A.
 
-### 交付内容
+### Deliverables
 
-1. 实现 `CompilerBackend` 的 NDJSON subprocess transport。
-2. 建立固定大小 worker pool，每 worker 一个 in-flight 请求。
-3. 建立有界 FIFO 队列；队列满立即返回过载响应。
-4. 分离并记录 queue wait、compile 和 total 时间。
-5. wall-clock timeout 后杀死整个 worker 进程组并补充容量。
-6. EOF、非法 JSON、错误 request ID 触发 worker replacement；Lean 编译错误不重试。
-7. 实现 graceful shutdown，关闭监听后排空或取消任务并回收进程。
-8. 编译入口使用 `/check`，严格验证入口使用 `/verify_proof`，保持请求和响应格式。
+1. NDJSON subprocess transport implementing `CompilerBackend`.
+2. A fixed pool with one in-flight request per worker.
+3. A bounded FIFO queue with immediate overload responses.
+4. Separate queue, compile and total timings.
+5. Kill the process group on timeout and restore capacity.
+6. Replace on EOF, invalid JSON or wrong request ID; do not retry Lean errors.
+7. Graceful shutdown: stop serving, drain or cancel work and reap processes.
+8. `/check` and `/verify_proof` routes with unchanged request/response formats.
 
-### 验收条件
+### Acceptance
 
-- fake worker 下验证并发上限、FIFO、过载、timeout、crash 和 replacement。
-- 一个 worker crash 不影响其他 worker 的 in-flight 请求。
-- 连续压力测试后 worker 数恢复到配置值。
-- HTTP handler 不直接创建或操作 Lean subprocess。
+- Fake-worker tests cover concurrency, FIFO, overload, timeout, crash and replacement.
+- One crash does not affect other workers' active requests.
+- Capacity returns to its configured value after stress tests.
+- HTTP handlers do not manage Lean subprocesses directly.
 
-## 合并顺序
+## Merge order
 
-1. 先合并本协议与任务拆分提交。
-2. A、B 都从该提交创建分支。
-3. A 先或 B 先合并均可；B 的默认 backend 在 A 合并后只需要配置 worker executable 路径。
-4. 两边合并后增加一组端到端测试：真实 worker × pool × HTTP；这组测试单独提交，不归
-   属于任一并行任务。
+1. Merge the shared protocol and task split.
+2. Branch A and B from that commit.
+3. Merge either first; B only needs the executable path after A lands.
+4. Add real worker × pool × HTTP integration tests in a separate final commit.
 
-## 明确不并行修改的文件
+## Files requiring coordination
 
-根目录 `README.md`、`pyproject.toml`、`lakefile.toml` 容易冲突。任务期间：
-
-- A 只在 `lakefile.toml` 添加 executable target，不做格式重排。
-- B 不修改 `lakefile.toml`。
-- 两边均不更新根 `README.md`；最终集成提交统一更新。
-- 新增 Python 依赖由 B 单独修改 `pyproject.toml` 和 `uv.lock`；A 不修改这两个文件。
+- A may add a target to `lakefile.toml`, without reformatting; B must not edit it.
+- Update root `README.md` only in the final integration commit.
+- B owns dependency changes in `pyproject.toml` and `uv.lock`; A must not edit them.

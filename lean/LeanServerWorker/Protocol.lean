@@ -33,6 +33,39 @@ structure Diagnostic where
   startPos : Option Position := none
   endPos : Option Position := none
 
+structure ElaborationTimings where
+  headerMs : Float := 0
+  elaborationMs : Float := 0
+  diagnosticsMs : Float := 0
+  profilingMs : Float := 0
+
+structure ComparisonError where
+  declaration : String
+  phase : String
+  kind : String
+  message : String
+
+private def elaborationTimingsJson (timings : ElaborationTimings) : Json :=
+  Json.mkObj [
+    ("header_ms", toJson timings.headerMs),
+    ("elaboration_ms", toJson timings.elaborationMs),
+    ("diagnostics_ms", toJson timings.diagnosticsMs),
+    ("profiling_ms", toJson timings.profilingMs)
+  ]
+
+private def comparisonErrorJson (error : ComparisonError) : Json :=
+  Json.mkObj [
+    ("declaration", toJson error.declaration),
+    ("phase", toJson error.phase),
+    ("kind", toJson error.kind),
+    ("message", toJson error.message)
+  ]
+
+private def validateRequestFields (json : Json) (allowed : Array String) : Except String Unit := do
+  for (field, _) in (← json.getObj?).toList do
+    if !allowed.contains field then
+      throw s!"unsupported worker request field: {field}"
+
 def parseRequest (line : String) : Except String Request := do
   let json ← Json.parse line
   let version ← (json.getObjVal? "protocol_version" >>= Json.getNat?)
@@ -44,9 +77,12 @@ def parseRequest (line : String) : Except String Request := do
     throw "request_id must be non-empty"
   match messageType with
   | "compile" =>
+    validateRequestFields json #["protocol_version", "type", "request_id", "code"]
     let code ← json.getObjVal? "code" >>= Json.getStr?
     return .compile { requestId, code }
   | "verify" =>
+    validateRequestFields json
+      #["protocol_version", "type", "request_id", "formal_statement", "content", "use_def_eq"]
     let formalStatement ← json.getObjVal? "formal_statement" >>= Json.getStr?
     let content ← json.getObjVal? "content" >>= Json.getStr?
     let useDefEq ← match json.getObjVal? "use_def_eq" with
@@ -81,20 +117,23 @@ def readyJson : Json :=
   ]
 
 def resultJson (requestId : String) (status : ResultStatus) (compileMs : Float)
-    (warnings errors : Array Diagnostic) : Json :=
+    (warnings errors : Array Diagnostic) (timings : ElaborationTimings := {}) : Json :=
   Json.mkObj [
     ("protocol_version", toJson protocolVersion),
     ("type", toJson "result"),
     ("request_id", toJson requestId),
     ("status", toJson status.toString),
     ("compile_ms", toJson compileMs),
+    ("timings", elaborationTimingsJson timings),
     ("warnings", Json.arr <| warnings.map diagnosticToJson),
     ("errors", Json.arr <| errors.map diagnosticToJson)
   ]
 
 def verifyResultJson (requestId : String) (status : ResultStatus) (compileMs : Float)
     (formalStatementMs candidateMs declarationsMs : Float)
-    (warnings errors : Array Diagnostic) (toolErrors failedDeclarations : Array String) : Json :=
+    (warnings errors : Array Diagnostic) (toolErrors failedDeclarations : Array String)
+    (formalTimings candidateTimings : ElaborationTimings := {})
+    (comparisonErrors : Array ComparisonError := #[]) : Json :=
   Json.mkObj [
     ("protocol_version", toJson protocolVersion),
     ("type", toJson "verify_result"),
@@ -104,6 +143,10 @@ def verifyResultJson (requestId : String) (status : ResultStatus) (compileMs : F
     ("formal_statement_ms", toJson formalStatementMs),
     ("candidate_ms", toJson candidateMs),
     ("declarations_ms", toJson declarationsMs),
+    ("timings", Json.mkObj [
+      ("formal_statement", elaborationTimingsJson formalTimings),
+      ("candidate", elaborationTimingsJson candidateTimings)]),
+    ("comparison_errors", Json.arr <| comparisonErrors.map comparisonErrorJson),
     ("warnings", Json.arr <| warnings.map diagnosticToJson),
     ("errors", Json.arr <| errors.map diagnosticToJson),
     ("tool_errors", toJson toolErrors),

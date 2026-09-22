@@ -50,7 +50,7 @@ HTTP endpoints use `/check` and `/verify_proof` directly, without an `/api/v1` p
 Update existing clients to these paths; the previous prefixed routes are no longer served.
 Request and response formats are unchanged. The internal worker protocol uses v2 only.
 Deploy Python and Lean worker together: rebuild the worker and restart the service.
-See [protocol updates](protocol/README.md#版本与更新).
+See [protocol updates](protocol/README.md#versions-and-upgrades).
 
 Verify a proof against a statement:
 
@@ -67,6 +67,16 @@ with `--verify-default-timeout` and `--verify-max-timeout`; requests can select 
 budget within that maximum. Unsupported AXLE options return HTTP 400.
 Fixed definitions also include their generated implementation dependencies, such as
 recursive helpers. These must match; theorem proof bodies may differ.
+If the formal statement has compilation errors, verification returns those errors
+immediately without compiling the candidate; candidate and declaration-check timings are zero.
+Statements without verifiable declarations also skip candidate compilation. Complete
+statements need no `sorry` placeholder. By default, declaration matching uses Lean
+definitional equality; `use_def_eq: false` selects structural expression equality.
+Verification ignores requested import module names in favor of the preloaded Mathlib
+environment, while `/check` rejects unknown import names. See the
+[accepted verification contract](doc/adr/0009-semantic-verification-contract.md) and
+[HTTP request schema](protocol/http/verify-proof-request.schema.json) for supported
+options and stable unsupported-mode errors.
 
 For the two archived slow proofs, use a larger budget and dedicated capacity:
 

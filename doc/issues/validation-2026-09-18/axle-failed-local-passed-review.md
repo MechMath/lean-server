@@ -150,6 +150,12 @@ replay above does not retest them.
 
 ## Remaining compatibility cases
 
+The input-policy decision below is now recorded in
+[ADR-0009](../../adr/0009-semantic-verification-contract.md): preserve semantic
+verification, accept definitionally equal types by default and allow complete
+statements without a `sorry` placeholder. Both archived cases are retained as
+regression fixtures; the historical observations below are unchanged.
+
 Two non-timeout acceptances were reproduced independently with a fresh local
 worker; their complete diagnostics are in `data/strict-replay-followup.json`.
 

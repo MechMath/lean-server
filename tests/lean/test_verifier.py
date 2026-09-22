@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any
 
 from lean_server.protocol import VerifyWorkerResult, decode_worker_message
@@ -47,6 +49,7 @@ class LeanVerifierTests(unittest.TestCase):
         content: str,
         *,
         use_def_eq: bool = True,
+        omit_use_def_eq: bool = False,
     ) -> dict[str, Any]:
         self.__class__.request_index += 1
         request_id = f"verify-{self.request_index}"
@@ -58,6 +61,8 @@ class LeanVerifierTests(unittest.TestCase):
             "content": content,
             "use_def_eq": use_def_eq,
         }
+        if omit_use_def_eq:
+            del request["use_def_eq"]
         process = self.worker.process
         assert process.stdin is not None
         assert process.stdout is not None
@@ -79,6 +84,8 @@ class LeanVerifierTests(unittest.TestCase):
         self.assertTrue(
             all(isinstance(item, str) for item in response["failed_declarations"])
         )
+        for phase in ("formal_statement", "candidate"):
+            self.assertLessEqual(sum(response["timings"][phase].values()), response[f"{phase}_ms"])
         return response
 
     def assert_verified(self, formal_statement: str, content: str) -> dict[str, Any]:
@@ -87,7 +94,33 @@ class LeanVerifierTests(unittest.TestCase):
         self.assertEqual(response["errors"], [])
         self.assertEqual(response["tool_errors"], [])
         self.assertEqual(response["failed_declarations"], [])
+        self.assertEqual(response["comparison_errors"], [])
         return response
+
+    def test_comparison_resource_limits_are_not_signature_or_value_mismatches(self) -> None:
+        cases = (
+            ("type", "theorem target : Nat.rec 0 (fun _ n => n + 1) 2000 = 2000 := by sorry",
+             "theorem target : 2000 = 2000 := rfl"),
+            ("value", "def target : Nat := Nat.rec 0 (fun _ n => n + 1) 2000",
+             "def target : Nat := 2000"),
+        )
+        for phase, formal, candidate in cases:
+            with self.subTest(phase=phase):
+                response = self.verify(formal, candidate)
+                self.assertEqual(response["status"], "ok", response)
+                self.assertEqual(response["errors"], [], response)
+                self.assertEqual(response["failed_declarations"], [], response)
+                self.assertEqual(len(response["comparison_errors"]), 1, response)
+                error = response["comparison_errors"][0]
+                self.assertEqual(error["declaration"], "target")
+                self.assertEqual(error["phase"], phase)
+                self.assertEqual(error["kind"], "resource_limit")
+                self.assertIn("recursion depth", error["message"])
+                self.assertTrue(response["tool_errors"])
+                self.assertFalse(any("does not match" in e for e in response["tool_errors"]))
+        self.assert_verified(TRIVIAL_FORMAL, "theorem target : True := True.intro")
+        mismatch, _ = self.assert_rejected(TRIVIAL_FORMAL, "theorem target : 1 = 1 := rfl")
+        self.assertEqual(mismatch["comparison_errors"], [])
 
     def assert_rejected(
         self,
@@ -113,6 +146,45 @@ theorem target (p : Prop) (h : p) : p := h
 """,
         )
 
+    def test_comparison_exception_tags_survive_meta_io_boundary(self) -> None:
+        subprocess.run(
+            ["lake", "env", "lean", "--run", "tests/fixtures/comparison-errors.lean"],
+            cwd=PROJECT_ROOT, check=True, timeout=60,
+        )
+
+    def test_invalid_formal_statement_skips_candidate_and_keeps_worker_usable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "candidate-executed"
+            content = (
+                f'run_cmd Lean.Elab.Command.liftIO <| '
+                f'IO.FS.writeFile {json.dumps(str(marker))} "executed"\n'
+                "theorem target : True := True.intro"
+            )
+            for formal in (
+                "theorem target : MissingFormalType := by sorry",
+                "theorem target : True :=",
+            ):
+                with self.subTest(formal=formal):
+                    response = self.verify(formal, content)
+                    self.assertEqual(response["status"], "compile_error", response)
+                    self.assertTrue(response["errors"], response)
+                    self.assertTrue(all(
+                        error["file_name"] == "<formal_statement>" for error in response["errors"]
+                    ), response)
+                    self.assertFalse(marker.exists(), "candidate ran despite an invalid statement")
+                    self.assertEqual(response["candidate_ms"], 0)
+                    self.assertEqual(sum(response["timings"]["candidate"].values()), 0)
+                    self.assertEqual(response["declarations_ms"], 0)
+                    self.assertGreater(response["formal_statement_ms"], 0)
+                    self.assertEqual(response["warnings"], [])
+                    self.assertEqual(response["tool_errors"], [])
+                    self.assertEqual(response["failed_declarations"], [])
+
+            # Positive control: the same candidate really performs the side effect
+            # when the statement is valid, using the same persistent worker.
+            self.assert_verified(TRIVIAL_FORMAL, content)
+            self.assertEqual(marker.read_text(), "executed")
+
     def test_compile_and_verify_share_one_protocol_and_process(self) -> None:
         self.assertEqual(self.worker.ready_json["protocol_version"], 2)
         before, _ = self.worker.compile_wire("before-verify", "def hidden : Nat := 42")
@@ -121,6 +193,86 @@ theorem target (p : Prop) (h : p) : p := h
         self.assertEqual(result.status, "compile_error")
         self.assertEqual(before["protocol_version"], verified["protocol_version"])
         self.assertEqual(after["protocol_version"], verified["protocol_version"])
+
+    def test_default_binders_match_only_in_definitional_equality_mode(self) -> None:
+        formal = "theorem target (n : Nat := 60) : n = n := by sorry"
+        content = "theorem target (n : Nat) : n = n := rfl"
+        self.assert_verified(formal, content)
+        structural = self.verify(formal, content, use_def_eq=False)
+        self.assertEqual(structural["errors"], [])
+        self.assertEqual(structural["failed_declarations"], ["target"])
+        self.assertIn("Theorem 'target' does not match expected signature", structural["tool_errors"])
+        # Request-local comparison mode must not affect the next verification.
+        self.assert_verified(formal, content)
+        defaulted = self.verify(formal, content, omit_use_def_eq=True)
+        self.assertEqual(defaulted["errors"], [])
+        self.assertEqual(defaulted["tool_errors"], [])
+        self.assertEqual(defaulted["failed_declarations"], [])
+
+    def test_historical_semantic_compatibility_cases(self) -> None:
+        cases = json.loads((PROJECT_ROOT / "tests/fixtures/semantic-compatibility.json").read_text())
+        for case in cases:
+            with self.subTest(uuid=case["uuid"]):
+                self.assert_verified(case["formal_statement"], case["candidate"])
+                if case["uuid"] == "Goedel-LM/SFT_dataset_v2=1292094":
+                    structural = self.verify(case["formal_statement"], case["candidate"],
+                                             use_def_eq=False)
+                    self.assertEqual(structural["errors"], [])
+                    self.assertTrue(structural["failed_declarations"])
+                    self.assertTrue(any("does not match expected signature" in error
+                                        for error in structural["tool_errors"]))
+
+    def test_complete_statement_needs_no_sorry_placeholder(self) -> None:
+        formal = "theorem target : True := True.intro"
+        self.assert_verified(formal, "theorem target : True := by constructor")
+        _, errors = self.assert_rejected(formal, "theorem target : 1 = 1 := rfl")
+        self.assertIn("does not match expected signature", errors)
+        _, errors = self.assert_rejected(formal, "theorem target : True := by sorry")
+        self.assertIn("uses 'sorry'", errors)
+
+    def test_statement_without_targets_skips_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "candidate-executed"
+            content = (
+                f'run_cmd Lean.Elab.Command.liftIO <| '
+                f'IO.FS.writeFile {json.dumps(str(marker))} "executed"\n'
+                "theorem target : True := True.intro"
+            )
+            for formal in ("", "import Mathlib", "#check Nat", "-- sorry is just a comment"):
+                with self.subTest(formal=formal):
+                    response = self.verify(formal, content)
+                    self.assertEqual(response["status"], "ok")
+                    self.assertEqual(response["errors"], [])
+                    self.assertEqual(response["tool_errors"], [
+                        "formal_statement contains no verifiable declarations"
+                    ])
+                    self.assertEqual(response["failed_declarations"], [])
+                    self.assertEqual(response["candidate_ms"], 0)
+                    self.assertFalse(marker.exists())
+            self.assert_verified(TRIVIAL_FORMAL, content)
+            self.assertEqual(marker.read_text(), "executed")
+
+    def test_verification_ignores_import_names_but_compilation_validates_them(self) -> None:
+        header = "import Legacy.Module.That.Does.Not.Exist\n"
+        formal = header + "theorem target : (2 : ℝ) + 2 = 4 := by sorry"
+        content = header + "theorem target : (2 : ℝ) + 2 = 4 := by norm_num"
+        self.assert_verified(formal, content)
+        compiled = self.worker.compile("strict-imports", content)
+        self.assertEqual(compiled.status, "compile_error")
+        self.assertIn("unknown module", compiled.errors[0].message)
+        self.assert_verified(formal, content)
+
+    def test_formal_environment_and_options_do_not_leak_into_candidate(self) -> None:
+        response = self.verify(
+            "def statementOnly : Nat := 0\ntheorem target : True := by sorry",
+            "#check statementOnly\ntheorem target : True := True.intro",
+        )
+        self.assertEqual(response["status"], "compile_error")
+        self.assertTrue(any("statementOnly" in e["message"] for e in response["errors"]))
+        self.assert_verified(
+            "set_option autoImplicit false\ntheorem target : True := by sorry",
+            "def helper (x : α) := x\ntheorem target : True := True.intro",
+        )
 
     def test_accepts_allowed_standard_axioms(self) -> None:
         formal_statement = """\

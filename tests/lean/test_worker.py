@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -58,14 +59,55 @@ class LeanWorkerTests(unittest.TestCase):
             success_json, success = worker.compile_wire("req-1", "def answer : Nat := 42")
             assert_matches_schema(success_json, result_schema)
             self.assertEqual(success.status, "ok")
-            expected = {**success_golden, "compile_ms": success_json["compile_ms"]}
+            expected = {**success_golden, "compile_ms": success_json["compile_ms"],
+                        "timings": success_json["timings"]}
             self.assertEqual(success_json, expected)
+            self.assertGreater(success.timings.elaboration_ms, 0)
+            self.assertEqual(success.timings.profiling_ms, 0)
+            self.assertLessEqual(sum(success_json["timings"].values()), success.compile_ms)
             self.assertTrue(worker.stdout_is_quiet(), "unexpected stdout after success result")
 
             error_json, error = worker.compile_wire("req-error", "def answer : Nat := true")
             assert_matches_schema(error_json, result_schema)
             self.assertEqual(error.status, "compile_error")
             self.assertTrue(worker.stdout_is_quiet(), "unexpected stdout after error result")
+
+    def test_slow_profile_contains_command_and_tactic_traces(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with Worker(env={"LEAN_SERVER_PROFILE_DIR": directory,
+                             "LEAN_SERVER_PROFILE_SLOW_MS": "100",
+                             "LEAN_SERVER_PROFILE_THRESHOLD_MS": "0"}) as worker:
+                result = worker.compile("profile/../request", """\
+run_cmd Lean.Elab.Command.liftIO (IO.sleep 150)
+theorem profiledTarget : True := by trivial
+""")
+                self.assertEqual(result.status, "ok", result)
+                self.assertGreaterEqual(result.timings.elaboration_ms, 100)
+                self.assertGreater(result.timings.profiling_ms, 0)
+                paths = list(Path(directory).glob("lean-*.json"))
+                self.assertEqual(len(paths), 1)
+                profile = json.loads(paths[0].read_text())
+                self.assertTrue(profile["threads"])
+                self.assertTrue(any("profile/../request <stdin>" in thread["name"]
+                                    for thread in profile["threads"]))
+                labels = [label for thread in profile["threads"] for label in thread["stringArray"]]
+                self.assertTrue(any("profiledTarget" in label for label in labels), labels)
+                self.assertTrue(any("trivial" in label for label in labels), labels)
+                self.assertTrue(worker.stdout_is_quiet())
+                fast = worker.compile("fast", "example : True := True.intro")
+                self.assertEqual(fast.status, "ok")
+                self.assertEqual(len(list(Path(directory).glob("*.json"))), 1)
+
+    def test_profile_export_failure_does_not_change_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            blocked = Path(directory) / "file"
+            blocked.write_text("not a directory")
+            with Worker(env={"LEAN_SERVER_PROFILE_DIR": str(blocked),
+                             "LEAN_SERVER_PROFILE_SLOW_MS": "0"}) as worker:
+                result = worker.compile("export-failure", "example : True := True.intro")
+                self.assertEqual(result.status, "ok")
+                self.assertEqual(result.errors, ())
+                self.assertTrue(worker.stdout_is_quiet())
 
     def test_source_errors_do_not_stop_worker(self) -> None:
         with Worker() as worker:
@@ -110,6 +152,23 @@ class LeanWorkerTests(unittest.TestCase):
             self.assertEqual(len(result.errors), 1)
             self.assertEqual(result.errors[0].message, "No goals to be solved")
             self.assertEqual(worker.compile("following", "example : True := True.intro").status, "ok")
+
+    def test_unsupported_worker_fields_are_not_silently_ignored(self) -> None:
+        with Worker() as worker:
+            assert worker.process.stdin is not None
+            base = {
+                "protocol_version": 2, "type": "verify", "request_id": "unsupported",
+                "formal_statement": "theorem target : True := by sorry",
+                "content": "theorem target : True := True.intro", "use_def_eq": True,
+            }
+            for field, value in (("permitted_sorries", ["target"]), ("mathlib_options", True),
+                                 ("global_options", {"maxHeartbeats": 0}), ("verify_negation", True),
+                                 ("ignore_imports", False), ("use_def_eqq", False)):
+                with self.subTest(field=field):
+                    worker.process.stdin.write(json.dumps({**base, field: value}) + "\n")
+                    worker.process.stdin.flush()
+                    result = worker.compile("following", "example : True := True.intro")
+                    self.assertEqual(result.status, "ok")
 
     def test_identical_messages_at_distinct_locations_are_preserved(self) -> None:
         with Worker() as worker:

@@ -65,5 +65,7 @@ def assert_matches_schema(value: Any, schema: Mapping[str, Any]) -> None:
         if isinstance(instance, (int, float)) and not isinstance(instance, bool):
             if "minimum" in rule and instance < rule["minimum"]:
                 raise AssertionError(f"{path}: number is below minimum {rule['minimum']}")
+            if "exclusiveMinimum" in rule and instance <= rule["exclusiveMinimum"]:
+                raise AssertionError(f"{path}: number is not above {rule['exclusiveMinimum']}")
 
     validate(value, schema, "$")

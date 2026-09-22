@@ -1,48 +1,55 @@
-# ADR-0008：通过 AXLE 对照与故障注入验证服务
+# ADR-0008: AXLE comparison and fault injection
 
-- 状态：Proposed
-- 日期：2026-09-18
+- Status: Proposed
+- Date: 2026-09-18
 
-## 背景
+## Context
 
-服务的主要风险不是 HTTP 是否可用，而是本地判定与 AXLE 语义不一致、跨请求状态污染以及异常后容量无法恢复。
+Key risks are semantic differences from AXLE, cross-request state leaks and lost
+capacity after failures.
 
-## 决策
+## Decision
 
-建立四层测试：
+Use four test layers:
 
-### 1. Lean verifier 单元测试
+### 1. Lean verifier unit tests
 
-使用 ADR-0006 中的正反例直接测试 Lean metaprogram，断言 verdict、失败声明和错误类别。
+Run ADR-0006 cases against the metaprogram. Assert verdicts, failed declarations
+and error categories.
 
 ### 2. API contract tests
 
-使用固定版本的官方 `axiom-axle` SDK 调用本地服务，覆盖成功、验证失败、invalid argument、timeout、过载和 internal error。
+Use a pinned official `axiom-axle` SDK. Cover success, rejection, invalid arguments,
+timeouts, overload and internal errors.
 
 ### 3. Golden parity tests
 
-选取已经由远端 AXLE 验证的 miniF2F 与 Putnam 样本及人工构造反例，保存输入和 AXLE 结果。本地服务必须给出相同 verdict；消息文本可以不同，但错误类别和 `failed_declarations` 应可解释。
+Store AXLE-verified miniF2F and Putnam samples plus constructed counterexamples.
+Require matching verdicts. Message text may differ; error categories and
+`failed_declarations` must be explainable.
 
-不在日常 CI 中持续调用远端 AXLE。远端结果作为带来源、环境和生成日期的版本化 fixture 保存。
+Keep remote results as versioned fixtures with source, environment and date.
+Do not call remote AXLE in routine CI.
 
-### 4. 稳定性与性能测试
+### 4. Stability and performance
 
-- 连续运行至少数千个请求；
-- 注入 worker kill、协议 EOF、超时和内存压力；
-- 验证 supervisor 自动恢复目标 worker 数；
-- 验证请求之间无声明、option 和 attribute 泄漏；
-- 在并发 1、2、4、8……下测量吞吐，找到目标机器的饱和点；
-- 分别记录冷启动、预热后延迟和 p50/p90/p99。
+- Run at least several thousand consecutive requests.
+- Inject worker kills, EOF, timeouts and memory pressure.
+- Check automatic capacity recovery and no declaration, option or attribute leaks.
+- Measure throughput at concurrency 1, 2, 4, 8, etc. to find saturation.
+- Record cold starts, warm latency and p50/p90/p99.
 
-## 日志约束
+## Logging
 
-每个请求生成 request ID，并记录 environment、timings、worker ID、attempt、verdict 和错误分类。默认不记录完整证明源码，避免日志体积失控；必要时通过显式 debug 配置保存到受控目录。
+Log request ID, environment, timings, worker ID, attempt, verdict and error category.
+Do not log full proofs by default; explicit debug mode may save them in a controlled
+directory.
 
-## 发布门槛
+## Release gates
 
-- strict-verification 反例全部通过；
-- golden corpus verdict 无未解释差异；
-- worker crash/timeout 后容量自动恢复；
-- soak test 无持续 RSS 增长或句柄泄漏；
-- 性能基准确认预热池明显优于每请求直接启动 Lean；
-- 文档中记录当前机器配置、worker 数与可复现 benchmark 命令。
+- All strict-verification counterexamples pass.
+- No unexplained golden-corpus verdict differences.
+- Capacity recovers after crashes and timeouts.
+- Soak tests show no sustained RSS growth or handle leaks.
+- Warm pools measurably outperform starting Lean per request.
+- Document hardware, worker count and reproducible benchmark commands.

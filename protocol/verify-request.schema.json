@@ -8,16 +8,14 @@
     "type",
     "request_id",
     "formal_statement",
-    "content",
-    "use_def_eq"
+    "content"
   ],
   "properties": {
     "protocol_version": {"const": 2},
     "type": {"const": "verify"},
     "request_id": {"type": "string", "minLength": 1},
-    "formal_statement": {"type": "string"},
+    "formal_statement": {"type": "string", "description": "Must introduce verifiable declarations; complete proofs without sorry are supported."},
     "content": {"type": "string"},
-    "use_def_eq": {"type": "boolean"}
+    "use_def_eq": {"type": "boolean", "default": true, "description": "Definitional equality when true; structural expression equality after universe-parameter normalization when false."}
   }
 }
-

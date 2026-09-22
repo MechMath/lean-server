@@ -38,7 +38,7 @@ documents in this archive.
 | Strict verification, NDJSON repair, pool hardening, and historical replay | Completed by PR #3; closes on merge | [#4](https://github.com/MechMath/lean-server/issues/4) |
 | `Nat.pow` panic, responses above 8 MiB, and very slow verification | Resource-boundary follow-up implemented; upstream panic diagnosis open | [#8](https://github.com/MechMath/lean-server/issues/8) |
 | Batch and worker-pool observability | Open | [#9](https://github.com/MechMath/lean-server/issues/9) |
-| AXLE compatibility and `/check` import semantics | Needs decision | [#11](https://github.com/MechMath/lean-server/issues/11) |
+| AXLE compatibility and `/check` import semantics | Semantic subset selected in [ADR-0009](../../adr/0009-semantic-verification-contract.md) | [#11](https://github.com/MechMath/lean-server/issues/11) |
 
 Final follow-up counts are in
 [`followup-2026-09-21.md`](followup-2026-09-21.md). The 698 malformed formal

@@ -82,7 +82,7 @@ submits both historical verifications concurrently with a default 1800-second
 budget, and probes ordinary compilation every two seconds. It records verifier
 phase timings, normal-request latency, worker replacements and candidate hashes.
 Clients submitting an explicit timeout must raise it themselves; a server default
-does not override a client request. See [deployment details](../../worker-pool.md#长验证隔离与部署预算).
+does not override a client request. See [deployment details](../../worker-pool.md#long-verification-and-deployment-budgets).
 
 ## Remaining issue scope
 

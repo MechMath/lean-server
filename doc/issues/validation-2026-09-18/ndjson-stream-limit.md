@@ -6,7 +6,7 @@
 - Resource-boundary follow-up: responses above 8 MiB now return a typed,
   non-retryable `WorkerMessageTooLarge` error. Bounded draining through the
   newline preserves a healthy worker; truncated or stalled output requires
-  replacement. See the [current byte and drain limits](../../../protocol/README.md#响应大小边界).
+  replacement. See the [current byte and drain limits](../../../protocol/README.md#response-size-limits).
 - Updated on 2026-09-21: stdout now has an explicit 8 MiB limit; stderr is
   drained independently in chunks with a bounded 64 KiB tail. Real replay
   also found 197,802 identical diagnostics at the same location in one result

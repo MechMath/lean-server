@@ -4,9 +4,13 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+.coverage
+htmlcov/
+
 # Local Jupyter notebooks
 *.ipynb
 .ipynb_checkpoints/
+!demo.ipynb
 
 # Generated validation details; keep summaries and final evidence.
 /doc/issues/validation-*/data/*-classification.jsonl

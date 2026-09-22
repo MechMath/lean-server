@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import selectors
 import subprocess
 import time
@@ -15,7 +16,7 @@ WORKER = PROJECT_ROOT / ".lake" / "build" / "bin" / "lean-server-worker"
 
 
 class Worker:
-    def __init__(self, startup_timeout: float = 180.0) -> None:
+    def __init__(self, startup_timeout: float = 180.0, *, env: dict[str, str] | None = None) -> None:
         self.started_at = time.perf_counter()
         self.process = subprocess.Popen(
             ["lake", "env", str(WORKER)],
@@ -25,6 +26,7 @@ class Worker:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env={**os.environ, **env} if env is not None else None,
         )
         assert self.process.stdout is not None
         # Mathlib is cached, but loading its environment can still take several seconds.

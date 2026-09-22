@@ -154,6 +154,52 @@ class WorkerProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ProtocolError, "tool_errors"):
             decode_worker_message(line)
 
+    def test_timing_and_comparison_error_extensions(self) -> None:
+        value = json.loads((EXAMPLES / "verify-success.json").read_text())
+        error = {"declaration": "target", "phase": "type", "kind": "resource_limit",
+                 "message": "maximum recursion depth has been reached"}
+        value["comparison_errors"] = [error]
+        message = decode_worker_message(json.dumps(value))
+        self.assertEqual(message.comparison_errors[0].kind, "resource_limit")
+        self.assertEqual(message.formal_timings.elaboration_ms, 0)
+        # Existing v2 workers/fake backends need not emit the additive fields.
+        del value["timings"]
+        del value["comparison_errors"]
+        legacy = decode_worker_message(json.dumps(value))
+        self.assertIsNone(legacy.formal_timings)
+        self.assertEqual(legacy.comparison_errors, ())
+
+    def test_rejects_malformed_observability_fields(self) -> None:
+        original = json.loads((EXAMPLES / "verify-success.json").read_text())
+        for bad in (None, [], {"formal_statement": {}},
+                    {"formal_statement": {"header_ms": -1}}):
+            with self.subTest(timings=bad), self.assertRaises(ProtocolError):
+                decode_worker_message(json.dumps({**original, "timings": bad}))
+        for field in ("header_ms", "elaboration_ms", "diagnostics_ms", "profiling_ms"):
+            for bad in (True, -1, float("inf"), float("nan"), "1"):
+                value = json.loads(json.dumps(original))
+                value["timings"]["candidate"][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(ProtocolError):
+                    decode_worker_message(json.dumps(value))
+        for bad in (None, {}, [1], [{"phase": "other"}],
+                    [{"phase": "type", "kind": "unknown"}]):
+            with self.subTest(errors=bad), self.assertRaises(ProtocolError):
+                decode_worker_message(json.dumps({**original, "comparison_errors": bad}))
+
+    def test_http_preserves_comparison_errors_without_claiming_mismatch(self) -> None:
+        from lean_server.http import _verify_result_body
+
+        value = json.loads((EXAMPLES / "verify-success.json").read_text())
+        error = {"declaration": "target", "phase": "value", "kind": "internal_error",
+                 "message": "test comparison exception"}
+        value["comparison_errors"] = [error]
+        message = decode_worker_message(json.dumps(value))
+        body = _verify_result_body(message, total_ms=5, content="candidate")
+        self.assertFalse(body["okay"])
+        self.assertEqual(body["comparison_errors"], [error])
+        self.assertEqual(body["failed_declarations"], [])
+        self.assertEqual(body["timings"]["candidate"], value["timings"]["candidate"])
+
 
 if __name__ == "__main__":
     unittest.main()
