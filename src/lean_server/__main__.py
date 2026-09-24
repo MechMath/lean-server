@@ -13,6 +13,13 @@ def main() -> None:
     parser.add_argument("--port", default=8000, type=int)
     parser.add_argument("--workers", default=2, type=int)
     parser.add_argument("--queue-capacity", default=8, type=int)
+    parser.add_argument("--long-workers", default=1, type=int,
+                        help="additional workers reserved for long verification (default: 1; 0 disables isolation)")
+    parser.add_argument("--long-queue-capacity", default=8, type=int)
+    parser.add_argument("--long-request-threshold", default=120.0, type=float,
+                        help="verification budgets above this many seconds use long workers")
+    parser.add_argument("--verify-default-timeout", default=600.0, type=float)
+    parser.add_argument("--verify-max-timeout", default=600.0, type=float)
     parser.add_argument(
         "--worker-command",
         help=(
@@ -56,6 +63,11 @@ def main() -> None:
         worker_command=worker_command,
         worker_startup_timeout_seconds=args.worker_startup_timeout,
         worker_startup_parallelism=args.worker_startup_parallelism,
+        long_worker_count=args.long_workers,
+        long_queue_capacity=args.long_queue_capacity,
+        long_request_threshold_seconds=args.long_request_threshold,
+        verify_default_timeout_seconds=args.verify_default_timeout,
+        verify_max_timeout_seconds=args.verify_max_timeout,
     )
     print(f"Lean server listening on http://{args.host}:{args.port}", flush=True)
     try:

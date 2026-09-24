@@ -1,53 +1,62 @@
-# ADR-0006：在 Lean 内部实现严格证明验证
+# ADR-0006: Strict verification in Lean
 
-- 状态：Proposed
-- 日期：2026-09-18
+- Status: Proposed
+- Date: 2026-09-18
 
-## 背景
+[ADR-0009](0009-semantic-verification-contract.md) defines accepted equality,
+complete-statement and import behavior.
 
-普通 Lean 编译会接受 `sorry`、新公理或被改写的 theorem statement，因此不能直接作为模型评测结果。Python 字符串或正则匹配无法可靠处理 namespace、notation、宏展开和 definitional equality。
+## Context
 
-## 决策
+Lean compilation accepts `sorry`, new axioms and changed theorem statements.
+Python text matching cannot reliably handle namespaces, notation, macros or
+definitional equality.
 
-严格检查实现为 Lean metaprogram，并在同一固定 base environment 中分别 elaborate formal statement 和 candidate。
+## Decision
 
-验证步骤：
+Implement verification as a Lean metaprogram. Elaborate formal and candidate
+independently from the same fixed base environment:
 
-1. 记录 base environment 的 declarations。
-2. elaborate formal statement，找出相对 base 新增且需要 candidate 实现的声明。
-3. 从同一 base 独立 elaborate candidate。
-4. 对每个 formal target 查找 candidate 同名声明。
-5. 比较 declaration kind。
-6. 比较 elaborated type；`use_def_eq=true` 时使用 Lean definitional equality，否则比较未约简表达式。
-7. 对 formal 中具有非占位实现的 definition，比较其类型和定义值；具体兼容规则用 golden tests 固化。
-8. 对 candidate 声明及目标的传递依赖检查 `sorryAx`、公理和 safety。
-9. 汇总每个失败声明及结构化错误消息。
+1. Record base declarations.
+2. Elaborate the formal statement and identify new required declarations.
+3. Elaborate the candidate independently.
+4. Find each formal target by its full name.
+5. Compare declaration kinds.
+6. Compare elaborated types by definitional equality when `use_def_eq=true`,
+   otherwise by unreduced expression structure.
+7. Compare types and values of definitions with fixed implementations;
+   capture compatibility rules in golden tests.
+8. Check candidate declarations and target dependencies for `sorryAx`, axioms and safety.
+9. Return failed declarations and structured errors.
 
-默认仅允许 Lean 标准公理：
+Allow only standard axioms by default:
 
 - `propext`
 - `Quot.sound`
 - `Classical.choice`
 
-默认 `permitted_sorries=[]`。任何 `sorry`、未许可 axiom 或目标/可达依赖中的 `unsafe` 都导致失败。额外 helper declaration 可以存在，但不能借此向目标引入非法依赖。
+With `permitted_sorries=[]`, reject `sorry`, unapproved axioms and unsafe targets
+or reachable dependencies. Extra helpers may exist but cannot introduce invalid
+dependencies. Check elaborated declarations; source scans are only a preliminary
+filter for banned commands.
 
-检查必须基于 elaborated declaration，而不是只扫描源码文本；源码扫描只能作为禁止明显危险 command 的前置防线。
+## Limits
 
-## 已知边界
+Like AXLE, the first version avoids full environment replay. Crafted metaprograms
+may bypass normal kernel-checked declaration paths. The local single-tenant model
+accepts this limit; fixed imports, disabled networking, read-only filesystems and
+worker recycling reduce exposure.
 
-与 AXLE 相同的性能取舍是：首版不从零 replay 整个 Lean environment。专门构造的 metaprogram 可能绕过正常 kernel-checked declaration 路径。当前本地、单租户威胁模型接受该限制，并通过固定 imports、禁网、只读文件系统和 worker 回收降低风险。
+Hostile-input guarantees would require evaluating SafeVerify, Comparator or kernel
+replay. Do not claim safety for arbitrary malicious Lean.
 
-如未来需要敌对输入保证，应评估 SafeVerify、Comparator 或 kernel replay；不得仅把当前实现描述为对任意恶意 Lean 都严格安全。
+## Required cases
 
-## 必须覆盖的反例
-
-- 正确证明：接受。
-- theorem statement 被弱化、改名或改变参数：拒绝。
-- 直接或经 helper 使用 `sorry`：拒绝。
-- `axiom bad : False` 后证明任意目标：拒绝。
-- 宏展开为 axiom：拒绝。
-- 使用 `unsafeCast` 或不安全声明：拒绝。
-- formal 中多个目标只证明一部分：拒绝并列出缺失声明。
-- namespace shadowing 伪造同名短名称：拒绝。
-- 合法使用 `Classical.choice`：接受。
-- parser/elaborator error：作为验证失败返回，而不是 infrastructure error。
+- Accept correct proofs and valid `Classical.choice` use.
+- Reject weakened, renamed or reparameterized theorems.
+- Reject direct or transitive `sorry`.
+- Reject `axiom bad : False` and macros introducing axioms.
+- Reject `unsafeCast` and unsafe declarations.
+- Reject partial implementations of multiple targets; list missing declarations.
+- Reject namespace shadowing using matching short names.
+- Return parser/elaborator errors as verification failures, not infrastructure errors.

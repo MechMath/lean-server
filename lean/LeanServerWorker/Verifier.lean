@@ -17,6 +17,9 @@ structure VerifyOutput where
   formalStatementMs : Float := 0
   candidateMs : Float := 0
   declarationsMs : Float := 0
+  formalTimings : ElaborationTimings := {}
+  candidateTimings : ElaborationTimings := {}
+  comparisonErrors : Array ComparisonError := #[]
 
 private def elapsedMilliseconds (started finished : Nat) : Float :=
   (finished - started).toFloat / 1000000.0
@@ -28,8 +31,26 @@ private def runCoreIn (env : Environment) (options : Options) (x : CoreM α) : I
     options
   } { env }
 
-private def runMetaIn (env : Environment) (options : Options) (x : MetaM α) : IO α :=
-  runCoreIn env options <| Lean.Meta.MetaM.run' x
+-- Keep Lean exceptions typed until after classification; CoreM.toIO' erases their tags.
+def runComparison (env : Environment) (options : Options) (name : Name) (phase : String)
+    (action : MetaM Bool) : IO (Except ComparisonError Bool) := do
+  let result ← ((Lean.Meta.MetaM.run' action).run' {
+    fileName := "<verify>"
+    fileMap := FileMap.ofString ""
+    options
+    initHeartbeats := (← IO.getNumHeartbeats)
+  } { env }).toBaseIO
+  match result with
+  | .ok matched => return .ok matched
+  | .error exception =>
+    let kind := if exception.isRuntime then "resource_limit"
+      else if exception.isInterrupt then "interrupted" else "internal_error"
+    return .error {
+      declaration := name.toString
+      phase
+      kind
+      message := (← exception.toMessageData.toString)
+    }
 
 private def newDeclarationNames (baseEnv env : Environment) (options : Options) :
     IO (Array Name) := do
@@ -76,37 +97,37 @@ private def declarationMetadataMatches : ConstantInfo → ConstantInfo → Bool
 
 private def expressionsMatch (env : Environment) (options : Options) (useDefEq : Bool)
     (irreducibleNames : Array Name) (formalInfo candidateInfo : ConstantInfo)
-    (getExpr : ConstantInfo → Option Expr) : IO Bool := do
+    (phase : String) (getExpr : ConstantInfo → Option Expr) :
+    IO (Except ComparisonError Bool) := do
   if formalInfo.levelParams.length != candidateInfo.levelParams.length then
-    return false
-  let some formalExpr := getExpr formalInfo | return false
-  let some candidateExpr := getExpr candidateInfo | return false
+    return .ok false
+  let some formalExpr := getExpr formalInfo | return .ok false
+  let some candidateExpr := getExpr candidateInfo | return .ok false
   if formalExpr.getUsedConstants.any fun name => !env.contains name then
-    return false
-  try
-    runMetaIn env options do
-      let levels := (List.range formalInfo.levelParams.length).map fun index =>
-        Level.param (.num `_verify index)
-      let formalExpr := formalExpr.instantiateLevelParams formalInfo.levelParams levels
-      let candidateExpr := candidateExpr.instantiateLevelParams candidateInfo.levelParams levels
-      if useDefEq then
-        Lean.Meta.withTransparency .all <| Lean.Meta.withCanUnfoldPred
-          (fun _ info => pure (!irreducibleNames.contains info.name)) <|
-          Lean.Meta.isDefEq formalExpr candidateExpr
-      else
-        return formalExpr == candidateExpr
-  catch _ =>
-    return false
+    return .ok false
+  runComparison env options formalInfo.name phase do
+    let levels := (List.range formalInfo.levelParams.length).map fun index =>
+      Level.param (.num `_verify index)
+    let formalExpr := formalExpr.instantiateLevelParams formalInfo.levelParams levels
+    let candidateExpr := candidateExpr.instantiateLevelParams candidateInfo.levelParams levels
+    if useDefEq then
+      Lean.Meta.withTransparency .all <| Lean.Meta.withCanUnfoldPred
+        (fun _ info => pure (!irreducibleNames.contains info.name)) <|
+        Lean.Meta.isDefEq formalExpr candidateExpr
+    else
+      return formalExpr == candidateExpr
 
 private def typesMatch (env : Environment) (options : Options) (useDefEq : Bool)
-    (irreducibleNames : Array Name) (formalInfo candidateInfo : ConstantInfo) : IO Bool :=
-  expressionsMatch env options useDefEq irreducibleNames formalInfo candidateInfo fun info =>
+    (irreducibleNames : Array Name) (formalInfo candidateInfo : ConstantInfo) :
+    IO (Except ComparisonError Bool) :=
+  expressionsMatch env options useDefEq irreducibleNames formalInfo candidateInfo "type" fun info =>
     some info.type
 
 private def valuesMatch (env : Environment) (options : Options) (useDefEq : Bool)
-    (irreducibleNames : Array Name) (formalInfo candidateInfo : ConstantInfo) : IO Bool :=
-  expressionsMatch env options useDefEq irreducibleNames formalInfo candidateInfo fun info =>
-    info.value? (allowOpaque := true)
+    (irreducibleNames : Array Name) (formalInfo candidateInfo : ConstantInfo) :
+    IO (Except ComparisonError Bool) :=
+  expressionsMatch env options useDefEq irreducibleNames formalInfo candidateInfo "value"
+    fun info => info.value? (allowOpaque := true)
 
 private def isDirectPlaceholderDefinition (info : ConstantInfo) : Bool :=
   match info with
@@ -168,32 +189,50 @@ private def usesPrivateAccessCommand (commands : Array Syntax) : Bool :=
       syntaxContainsKind command `Lean.Elab.Command.exportPrivate
 
 def verifyProof (baseEnv : Environment) (options : Options) (formalStatement content : String)
-    (useDefEq := true) : IO VerifyOutput := do
+    (useDefEq := true) (profiling : ProfilingConfig := {}) : IO VerifyOutput := do
   let formalStarted ← IO.monoNanosNow
   let formal ← elaborateCode baseEnv options formalStatement
-    (fileName := "<formal_statement>") (validateRequestedImports := false)
+    (fileName := "<formal_statement>") (validateRequestedImports := false) (profiling := profiling)
   let formalFinished ← IO.monoNanosNow
+
+  -- An invalid statement cannot be verified; do not execute candidate commands or tactics.
+  if !formal.errors.isEmpty then
+    return {
+      errors := formal.errors
+      formalStatementMs := elapsedMilliseconds formalStarted formalFinished
+      formalTimings := formal.timings
+    }
+
+  let targetsStarted ← IO.monoNanosNow
+  let formalNames ← newDeclarationNames baseEnv formal.env options
+  let targets := formalNames.filter fun name =>
+    (formal.env.find? name).any isTargetDeclaration
+  let targetsFinished ← IO.monoNanosNow
+  let targetsMs := elapsedMilliseconds targetsStarted targetsFinished
+  if targets.isEmpty then
+    return {
+      toolErrors := #["formal_statement contains no verifiable declarations"]
+      formalStatementMs := elapsedMilliseconds formalStarted formalFinished
+      declarationsMs := targetsMs
+      formalTimings := formal.timings
+    }
 
   let candidateStarted ← IO.monoNanosNow
   let candidate ← elaborateCode baseEnv options content
-    (fileName := "<content>") (validateRequestedImports := false)
+    (fileName := "<content>") (validateRequestedImports := false) (profiling := profiling)
   let candidateFinished ← IO.monoNanosNow
 
   let errors := formal.errors ++ candidate.errors
   let warnings := candidate.warnings
   let mut toolErrors := #[]
   let mut failedDeclarations := #[]
+  let mut comparisonErrors := #[]
   let declarationsStarted ← IO.monoNanosNow
 
   if errors.isEmpty then
-    let formalNames ← newDeclarationNames baseEnv formal.env options
-    let targets := formalNames.filter fun name =>
-      (formal.env.find? name).any isTargetDeclaration
     let required := requiredDeclarations baseEnv formal.env targets
     let irreducibleNames := required.filterMap fun (name, _) =>
       if (formal.env.find? name).any isDirectPlaceholderDefinition then some name else none
-    if targets.isEmpty then
-      toolErrors := toolErrors.push "formal_statement contains no verifiable declarations"
     if usesPrivateAccessCommand candidate.commands then
       toolErrors := toolErrors.push "Candidate uses banned 'open private' command"
       for name in targets do
@@ -222,17 +261,24 @@ def verifyProof (baseEnv : Environment) (options : Options) (formalStatement con
           else if !declarationMetadataMatches formalInfo candidateInfo then
             toolErrors := toolErrors.push s!"Declaration '{name}' does not match expected metadata"
             declarationFailed := true
-          else if !(← typesMatch candidate.env options useDefEq irreducibleNames
-              formalInfo candidateInfo) then
-            toolErrors := toolErrors.push s!"{declarationLabel formalInfo} '{name}' does not match \
-              expected signature"
-            declarationFailed := true
           else
-            if shouldCompareValue formalInfo then
-              if !(← valuesMatch candidate.env options useDefEq irreducibleNames
-                  formalInfo candidateInfo) then
-                toolErrors := toolErrors.push s!"Declaration '{name}' does not match expected value"
-                declarationFailed := true
+            match ← typesMatch candidate.env options useDefEq irreducibleNames
+                formalInfo candidateInfo with
+            | .error error => comparisonErrors := comparisonErrors.push error
+            | .ok false =>
+              toolErrors := toolErrors.push s!"{declarationLabel formalInfo} '{name}' \
+                does not match expected signature"
+              declarationFailed := true
+            | .ok true =>
+              if shouldCompareValue formalInfo then
+                match ← valuesMatch candidate.env options useDefEq irreducibleNames
+                    formalInfo candidateInfo with
+                | .error error => comparisonErrors := comparisonErrors.push error
+                | .ok true => pure ()
+                | .ok false =>
+                  toolErrors := toolErrors.push
+                    s!"Declaration '{name}' does not match expected value"
+                  declarationFailed := true
 
           if candidateInfo.isUnsafe then
             toolErrors := toolErrors.push s!"Unsafe declaration '{name}' detected"
@@ -252,14 +298,20 @@ def verifyProof (baseEnv : Environment) (options : Options) (formalStatement con
             failedDeclarations := appendFailure failedDeclarations owner
 
   let declarationsFinished ← IO.monoNanosNow
+  for error in comparisonErrors do
+    toolErrors := toolErrors.push s!"Comparison failed for '{error.declaration}' \
+      ({error.phase}, {error.kind}): {error.message}"
   return {
     warnings
     errors
     toolErrors
     failedDeclarations
+    comparisonErrors
+    formalTimings := formal.timings
+    candidateTimings := candidate.timings
     formalStatementMs := elapsedMilliseconds formalStarted formalFinished
     candidateMs := elapsedMilliseconds candidateStarted candidateFinished
-    declarationsMs := elapsedMilliseconds declarationsStarted declarationsFinished
+    declarationsMs := targetsMs + elapsedMilliseconds declarationsStarted declarationsFinished
   }
 
 end LeanServerWorker

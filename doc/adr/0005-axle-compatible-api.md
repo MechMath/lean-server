@@ -1,21 +1,25 @@
-# ADR-0005：提供 AXLE-compatible `verify_proof` API
+# ADR-0005: AXLE-compatible `verify_proof` API
 
-- 状态：Proposed
-- 日期：2026-09-18
+- Status: Proposed
+- Date: 2026-09-18
 
-## 背景
+[ADR-0009](0009-semantic-verification-contract.md) defines the implemented input
+scope and compatibility decisions.
 
-现有 `lean-eval-toolkit` 使用官方 `AxleClient`。如果本地服务兼容其请求路径和核心响应字段，客户端只需修改 `api_url`，无需维护第二套评测协议。
+## Context
 
-## 决策
+`lean-eval-toolkit` uses the official `AxleClient`. Compatible paths and core
+response fields let it switch services by changing `api_url`.
 
-实现：
+## Decision
+
+Implement:
 
 ```text
-POST /api/v1/verify_proof
+POST /verify_proof
 ```
 
-首版接受以下字段：
+Initial request fields:
 
 ```json
 {
@@ -30,7 +34,7 @@ POST /api/v1/verify_proof
 }
 ```
 
-至少返回以下兼容字段：
+Required compatible response fields:
 
 ```json
 {
@@ -48,12 +52,13 @@ POST /api/v1/verify_proof
 }
 ```
 
-兼容性通过官方 `axiom-axle` Python SDK 的集成测试确认，而不是只用手写 HTTP 请求确认。
+Confirm compatibility through official `axiom-axle` SDK integration tests, beyond
+handwritten HTTP requests. Reject unsupported parameter combinations explicitly.
+Test status codes and bodies with the SDK so existing retries recognize overload
+and infrastructure failures.
 
-对于首版不支持的参数组合，返回明确的 invalid-argument 响应，不得静默忽略。HTTP status 与响应 body 需要经过 SDK 实测，确保服务过载和基础设施错误能被现有 retry 策略识别。
+## Consequences
 
-## 后果
-
-- `lean-eval-toolkit` 可以通过配置切换远端 AXLE 和本地服务。
-- API schema 会受到官方 SDK 演进影响；应固定测试过的 SDK 版本并加入 contract tests。
-- “兼容”仅覆盖 `verify_proof` 所需子集，不代表实现其他 AXLE 工具。
+- Clients switch between remote AXLE and local service by configuration.
+- Pin the tested SDK version and add contract tests as its schema evolves.
+- Compatibility covers the required `verify_proof` subset, not all AXLE tools.

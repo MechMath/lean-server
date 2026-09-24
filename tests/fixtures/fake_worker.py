@@ -13,16 +13,44 @@ def emit(value: dict) -> None:
 if len(sys.argv) == 3 and sys.argv[1] == "--startup-delay":
     time.sleep(float(sys.argv[2]))
 
-emit({"protocol_version": 1, "type": "ready", "lean_version": "4.30.0"})
+emit({"protocol_version": 2, "type": "ready", "lean_version": "4.30.0"})
 
 for line in sys.stdin:
     request = json.loads(line)
+    if request.get("protocol_version") != 2:
+        raise ValueError("unsupported protocol_version")
     request_id = request["request_id"]
+    content = request.get("code", request.get("content", ""))
+    if content.startswith("__RESPONSE_BYTES__:"):
+        size = int(content.split(":", 1)[1])
+        verifying = request["type"] == "verify"
+        message = {
+            "protocol_version": 2, "type": "verify_result" if verifying else "result",
+            "request_id": request_id, "status": "ok", "compile_ms": 1.0,
+            "warnings": [{"severity": "warning", "message": "", "file_name": None,
+                          "start": None, "end": None}], "errors": [],
+        }
+        if verifying:
+            message.update(formal_statement_ms=0.0, candidate_ms=1.0, declarations_ms=0.0,
+                           tool_errors=[], failed_declarations=[])
+        overhead = len(json.dumps(message, separators=(",", ":")).encode()) + 1
+        message["warnings"][0]["message"] = "x" * (size - overhead)
+        emit(message)
+        continue
+    if content in ("__OVERSIZE_EOF__", "__OVERSIZE_STALL__", "__OVERSIZE_FLOOD__"):
+        size = 80 * 1024 * 1024 if content == "__OVERSIZE_FLOOD__" else 9 * 1024 * 1024
+        for _ in range(size // (64 * 1024)):
+            sys.stdout.write("x" * (64 * 1024))
+            sys.stdout.flush()
+        if content == "__OVERSIZE_EOF__":
+            raise SystemExit(0)
+        time.sleep(60)
+        continue
     if request.get("code", request.get("content")) == "__NAT_POW_PANIC__":
         sys.stderr.write("INTERNAL PANIC: Nat.pow exponent is too big\n")
         sys.stderr.flush()
         raise SystemExit(1)
-    if request.get("protocol_version") == 2 and request.get("type") == "verify":
+    if request.get("type") == "verify":
         content = request["content"]
         if content == "__CRASH__":
             sys.stderr.write("intentional fake worker crash\n")
@@ -121,7 +149,7 @@ for line in sys.stdin:
     if code == "__ERROR__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "compile_error",
@@ -142,7 +170,7 @@ for line in sys.stdin:
     if code == "__INTERNAL_ERROR__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "internal_error",
@@ -163,7 +191,7 @@ for line in sys.stdin:
     if code == "__WARNING__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "ok",
@@ -184,7 +212,7 @@ for line in sys.stdin:
     if code == "__SORRY__":
         emit(
             {
-                "protocol_version": 1,
+                "protocol_version": 2,
                 "type": "result",
                 "request_id": request_id,
                 "status": "ok",
@@ -204,7 +232,7 @@ for line in sys.stdin:
         continue
     emit(
         {
-            "protocol_version": 1,
+            "protocol_version": 2,
             "type": "result",
             "request_id": request_id,
             "status": "ok",

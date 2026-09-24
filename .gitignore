@@ -4,9 +4,22 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 
+.coverage
+htmlcov/
+
 # Local Jupyter notebooks
 *.ipynb
 .ipynb_checkpoints/
+!demo.ipynb
 
-# Local validation work products
+# Generated validation details; keep summaries and final evidence.
+/doc/issues/validation-*/data/*-classification.jsonl
+/doc/issues/validation-*/data/strict-replay.jsonl
+/doc/issues/validation-*/data/remote-*/*-index.jsonl
+/doc/issues/validation-*/data/remote-*/*-responses.jsonl.gz
+/doc/issues/validation-*/data/remote-*/logs/*
+!/doc/issues/validation-*/data/remote-*/logs/*-tests-final.log
+
+# Local validation work products and external source archives
 /doc/issues/**/work/
+/doc/issues/validation-*/data/disagreements.jsonl

@@ -6,8 +6,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 
-PROTOCOL_VERSION = 1
-VERIFY_PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 2
 WorkerStatus = Literal["ok", "compile_error", "internal_error"]
 
 
@@ -92,7 +91,7 @@ class VerifyWorkerRequest:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "protocol_version": VERIFY_PROTOCOL_VERSION,
+            "protocol_version": PROTOCOL_VERSION,
             "type": "verify",
             "request_id": self.request_id,
             "formal_statement": self.formal_statement,
@@ -110,12 +109,52 @@ class WorkerReady:
 
 
 @dataclass(frozen=True, slots=True)
+class ElaborationTimings:
+    header_ms: float
+    elaboration_ms: float
+    diagnostics_ms: float
+    profiling_ms: float
+
+    @classmethod
+    def from_dict(cls, value: object) -> ElaborationTimings:
+        if not isinstance(value, dict):
+            raise ProtocolError("elaboration timings must be an object")
+        return cls(**{field: _required_number(value, field) for field in cls.__dataclass_fields__})
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonError:
+    declaration: str
+    phase: Literal["type", "value"]
+    kind: Literal["resource_limit", "interrupted", "internal_error"]
+    message: str
+
+    @classmethod
+    def from_dict(cls, value: object) -> ComparisonError:
+        if not isinstance(value, dict):
+            raise ProtocolError("comparison error must be an object")
+        phase = value.get("phase")
+        kind = value.get("kind")
+        if phase not in ("type", "value"):
+            raise ProtocolError("invalid comparison error phase")
+        if kind not in ("resource_limit", "interrupted", "internal_error"):
+            raise ProtocolError("invalid comparison error kind")
+        return cls(
+            declaration=_required_string(value, "declaration", nonempty=True),
+            phase=phase,
+            kind=kind,
+            message=_required_string(value, "message"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerResult:
     request_id: str
     status: WorkerStatus
     compile_ms: float
     warnings: tuple[WorkerDiagnostic, ...]
     errors: tuple[WorkerDiagnostic, ...]
+    timings: ElaborationTimings | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +169,9 @@ class VerifyWorkerResult:
     errors: tuple[WorkerDiagnostic, ...]
     tool_errors: tuple[str, ...]
     failed_declarations: tuple[str, ...]
+    formal_timings: ElaborationTimings | None = None
+    candidate_timings: ElaborationTimings | None = None
+    comparison_errors: tuple[ComparisonError, ...] = ()
 
 
 WorkerJobRequest = WorkerRequest | VerifyWorkerRequest
@@ -176,6 +218,13 @@ def _string_array(value: dict[str, Any], field: str) -> tuple[str, ...]:
     return tuple(items)
 
 
+def _comparison_errors(value: dict[str, Any]) -> tuple[ComparisonError, ...]:
+    items = value.get("comparison_errors", [])
+    if not isinstance(items, list):
+        raise ProtocolError("comparison_errors must be an array")
+    return tuple(ComparisonError.from_dict(item) for item in items)
+
+
 def decode_worker_message(line: str) -> WorkerMessage:
     try:
         value = json.loads(line)
@@ -184,21 +233,31 @@ def decode_worker_message(line: str) -> WorkerMessage:
     if not isinstance(value, dict):
         raise ProtocolError("worker message must be an object")
     version = value.get("protocol_version")
+    if type(version) is not int or version != PROTOCOL_VERSION:
+        raise ProtocolError(f"unsupported worker protocol_version: {version!r}")
     message_type = value.get("type")
-    if version == PROTOCOL_VERSION and message_type == "ready":
+    if message_type == "ready":
         lean_version = value.get("lean_version")
         if not isinstance(lean_version, str):
             raise ProtocolError("ready message requires lean_version")
         return WorkerReady(lean_version=lean_version)
-    if version == PROTOCOL_VERSION and message_type == "result":
+    if message_type == "result":
         return WorkerResult(
             request_id=_required_string(value, "request_id", nonempty=True),
             status=_worker_status(value),
             compile_ms=_required_number(value, "compile_ms"),
             warnings=_diagnostics(value, "warnings"),
             errors=_diagnostics(value, "errors"),
+            timings=ElaborationTimings.from_dict(value["timings"]) if "timings" in value else None,
         )
-    if version == VERIFY_PROTOCOL_VERSION and message_type == "verify_result":
+    if message_type == "verify_result":
+        formal_timings = candidate_timings = None
+        if "timings" in value:
+            timings = value["timings"]
+            if not isinstance(timings, dict):
+                raise ProtocolError("verification timings must be an object")
+            formal_timings = ElaborationTimings.from_dict(timings.get("formal_statement"))
+            candidate_timings = ElaborationTimings.from_dict(timings.get("candidate"))
         return VerifyWorkerResult(
             request_id=_required_string(value, "request_id", nonempty=True),
             status=_worker_status(value),
@@ -210,8 +269,8 @@ def decode_worker_message(line: str) -> WorkerMessage:
             errors=_diagnostics(value, "errors"),
             tool_errors=_string_array(value, "tool_errors"),
             failed_declarations=_string_array(value, "failed_declarations"),
+            formal_timings=formal_timings,
+            candidate_timings=candidate_timings,
+            comparison_errors=_comparison_errors(value),
         )
-    raise ProtocolError(
-        "unsupported worker protocol_version/message type combination: "
-        f"{version!r}/{message_type!r}"
-    )
+    raise ProtocolError(f"unsupported worker message type: {message_type!r}")

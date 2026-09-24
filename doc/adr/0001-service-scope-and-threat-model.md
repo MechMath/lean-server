@@ -1,23 +1,28 @@
-# ADR-0001：服务范围与威胁模型
+# ADR-0001: Scope and threat model
 
-- 状态：Proposed
-- 日期：2026-09-18
+- Status: Proposed
+- Date: 2026-09-18
 
-## 背景
+## Context
 
-公共 AXLE 存在严格并发限制，而评测流程需要本地高频验证。调用方和机器由同一团队控制，但 Lean 源码由模型生成，可能包含错误、无限计算、异常内存使用或带副作用的 metaprogram。
+Public AXLE limits concurrency; evaluation needs frequent local verification.
+One team controls callers and hosts, but model-generated Lean may contain errors,
+infinite computation, excessive memory use or metaprogram side effects.
 
-## 决策
+## Decision
 
-服务定位为单机、单租户、可信调用方的内部服务。它不实现公网多租户安全边界，但把模型生成的 Lean 视为“不可靠输入”：必须设置超时、内存限制、worker crash recovery 和状态清理。
+Run a single-machine, single-tenant service for trusted callers. Treat generated
+Lean as unreliable: enforce timeouts, memory limits, crash recovery and state cleanup.
 
-第一阶段不采用 AXLE 的每请求 sandbox 进程。API/controller 与 Lean worker 必须是不同进程；故障 worker 可以被独立杀死并重建。
+The first phase uses separate API and worker processes, without per-request
+sandboxes. Each failed worker can be killed and rebuilt independently.
 
-服务默认只监听 `127.0.0.1`。如需跨机器访问，必须通过明确配置开启可信内网监听，并在独立 ADR 中补充认证和网络策略。
+Listen on `127.0.0.1` by default. Trusted-network access requires explicit
+configuration and a separate ADR for authentication and network policy.
 
-## 后果
+## Consequences
 
-- 可以使用长期运行的预热 REPL，显著降低 Mathlib 冷启动成本。
-- 不承诺抵御专门构造的 kernel-bypass、宿主机攻击或同机恶意租户。
-- worker 隔离仍然是必要的，因为稳定性故障并不要求攻击者存在。
-- 若未来公开服务，需要用新 ADR 重新评估每请求 sandbox、seccomp、文件系统和网络隔离。
+- Warm REPL workers avoid Mathlib cold starts.
+- Crafted kernel bypasses, host attacks and malicious local tenants are outside scope.
+- Worker isolation remains necessary for reliability.
+- Public access would require reassessing sandboxes, seccomp, filesystem and network isolation.

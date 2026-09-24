@@ -1,46 +1,46 @@
-# ADR-0007：有界队列、有限重试与按核心配置容量
+# ADR-0007: Bounded queues, retries and capacity
 
-- 状态：Proposed
-- 日期：2026-09-18
+- Status: Proposed
+- Date: 2026-09-18
 
-## 背景
+## Context
 
-评测程序可能瞬间提交大量证明。无界任务和协程会增加内存、文件描述符和尾延迟。AXLE 的单机结果也表明并发超过物理核心数后吞吐不再增长。
+Evaluation submits bursts of proofs. Unbounded tasks increase memory use, file
+descriptors and tail latency. AXLE's throughput saturates near physical core count.
 
-## 决策
+## Decision
 
-- 每个 worker 最多一个 in-flight 请求。
-- API 前设置有界 FIFO 队列，初始容量为 `worker_count * 4`。
-- 队列已满时立即返回过载错误，让客户端指数退避；不无限等待。
-- request timeout 分为 queue wait 和 execution 两段，并分别记录。
-- caller timeout 上限由服务端限制，防止单请求长期占用 worker。
-- 仅 worker crash、EOF、协议损坏等基础设施错误在新 worker 上内部重试，默认最多一次。
-- Lean error、严格验证失败、请求错误和确定性超时不内部重试。
+- One in-flight request per worker.
+- A bounded FIFO queue, initially `worker_count * 4`.
+- Reject full queues immediately; clients use exponential backoff.
+- Record queue wait and execution time separately.
+- Cap caller timeouts on the server.
+- Retry only crashes, EOF and protocol failures, at most once on a new worker.
+- Do not retry Lean errors, verification failures, bad requests or deterministic timeouts.
 
-worker 初始数量：
+Initial worker count:
 
 ```text
 min(
-  可用物理 CPU 核数,
-  floor(可分配内存 / 实测单 worker 峰值 RSS)
+  available physical CPU cores,
+  floor(memory budget / measured peak RSS per worker)
 )
 ```
 
-保留至少一个 CPU 核和足够内存给 API、模型调用方及操作系统。最终值以目标机器 benchmark 为准。
+Reserve at least one core and enough memory for the API, callers and OS. Tune on
+the target machine.
 
-## 指标
+## Metrics
 
-必须采集：
+- Queue depth, wait time and rejections.
+- Active, ready and restarting workers.
+- Total latency and formal/candidate/verification timings.
+- Timeouts, crashes, OOMs and internal retries.
+- Request count and RSS per worker.
+- Counts by verdict.
 
-- queue depth、queue wait 和 rejected requests；
-- active/ready/restarting worker 数；
-- 请求总延迟及 formal/candidate/verification 分段耗时；
-- timeout、crash、OOM、internal retry；
-- 每个 worker 的 request count 和 RSS；
-- 按 verdict 分类的计数。
+## Consequences
 
-## 后果
-
-- 高峰时系统提供明确 backpressure，不因无界排队失控。
-- 客户端并发应与服务容量协调；把客户端并发无限调大不会增加吞吐。
-- 本地单租户暂不需要按 API key 公平队列。
+Bounded queues provide backpressure. Match client concurrency to capacity; extra
+concurrency does not raise throughput. Local single-tenant use needs no API-key
+fair scheduling.

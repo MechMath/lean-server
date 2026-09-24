@@ -1,44 +1,44 @@
-# Worker pool 与 HTTP 调度
+# Worker pool and HTTP scheduling
 
-## 当前实现
+## Current implementation
 
-HTTP handler 不再直接启动 Lean。请求经过以下路径：
+HTTP handlers submit work through:
 
 ```text
 ThreadingHTTPServer
-  -> CompilerPoolRuntime（独立 asyncio event loop）
-  -> CompilerPool（有界 FIFO queue）
+  -> CompilerPoolRuntime (dedicated asyncio event loop)
+  -> CompilerPool (bounded normal and long-verification queues)
   -> CompilerBackend
-      `- WorkerProcessBackend：默认的常驻 NDJSON worker
+      `- WorkerProcessBackend: persistent NDJSON worker by default
 ```
 
-默认配置为 2 个 worker slot、8 个等待位置。每个 slot 最多一个 in-flight 请求；等待队列
-已满时立即返回 HTTP 503：
+Defaults: 2 normal slots, 1 extra long-verification slot and 8 queued requests per
+lane. Each slot runs one request. A full queue returns HTTP 503 immediately:
 
 ```json
 {"error":"compiler queue is full","retryable":true}
 ```
 
-## 启动
+## Startup
 
-服务在绑定 HTTP 端口前执行一次启动检查：
+Before binding the HTTP port, startup checks require:
 
-- `lean-toolchain` 必须固定为 `leanprover/lean4:v4.30.0`；
-- 固定 toolchain 与 `lake env lean` 都必须实际报告 Lean 4.30.0；
-- `lakefile.toml` 和 `lake-manifest.json` 必须固定 Mathlib v4.30.0；
-- `.lake/packages/mathlib` 的实际 Git revision 必须与 manifest 一致；
-- `import Mathlib` smoke compile 必须成功。
+- `lean-toolchain` pinned to `leanprover/lean4:v4.30.0`.
+- Both the pinned toolchain and `lake env lean` reporting 4.30.0.
+- Mathlib v4.30.0 pinned in `lakefile.toml` and `lake-manifest.json`.
+- `.lake/packages/mathlib` at the manifest's Git revision.
+- A successful `import Mathlib` smoke compile.
 
-任一检查失败时进程以状态码 1 退出，不开放 HTTP 服务。检查成功后会打印实际 Mathlib
-revision 与耗时。
+Failure exits with status 1 without serving HTTP. Success prints the Mathlib
+revision and elapsed time.
 
-默认启动仓库内已构建的常驻 worker：
+Start the built worker:
 
 ```bash
 uv run lean-server --workers 4 --queue-capacity 16
 ```
 
-也可以显式覆盖 worker 命令：
+Or override its command:
 
 ```bash
 uv run lean-server \
@@ -49,28 +49,70 @@ uv run lean-server \
   --worker-command '.lake/build/bin/lean-server-worker'
 ```
 
-`--worker-command` 使用 shell 风格字符串解析，但启动 subprocess 时不经过 shell。
-常驻 worker 启动时需要预加载 Mathlib，因此每个 ready handshake 默认允许 180 秒；pool
-默认最多同时启动 8 个 worker，避免大量进程同时读取 Mathlib，也避免逐个串行启动。两个值可
-分别通过 `--worker-startup-timeout` 和 `--worker-startup-parallelism` 调整。
+`--worker-command` uses shell-style parsing but launches without a shell. Mathlib
+preloading gets a 180-second ready-handshake budget per worker. At most 8 workers
+start concurrently to balance disk contention and startup time. Both limits are
+configurable with the flags above.
 
-## 生命周期和故障
+## Long verification and deployment budgets
 
-- 启动时以受限并行方式等待所有 backend ready，之后才开始监听 HTTP。
-- timeout、进程退出、EOF、非法协议、错误 request ID 和 `internal_error` 都会回收当前
-  worker slot 并自动创建替代 worker。
-- Lean parser、elaborator 或类型错误返回 `compile_error`，不会回收 worker。
-- replacement 失败时按 50ms 到 2s 的上限指数退避，避免 respawn storm。
-- 服务关闭时取消 active 和 queued 请求，随后关闭所有 backend 和进程组。
-- 正在启动的 replacement 也由 pool 管理，取消 ready handshake 时会终止并回收进程。
-- stderr 按字节块持续读取，最多保留末尾 64 KiB（对外最多 100 行）；无换行的超长日志
-  不会中断读取。清理异常会记录日志，不会终止 worker slot 的恢复流程。
+`--workers` and `--queue-capacity` control normal capacity. `--long-workers`
+(default 1) and `--long-queue-capacity` (default 8) add separate long-job capacity.
+Neither lane borrows slots or queue space; long-worker replacement also stays in
+its lane. Both share input fingerprints and panic quarantine, so changing budgets
+cannot bypass quarantine.
 
-`timeout_seconds` 是排队与执行共享的总预算，从请求进入 pool 开始计时。等待 worker
-重建也计入预算；排队期间超时或取消会立即释放队列位置，不会执行该任务。执行阶段只使用
-剩余预算，超时后回收相应 worker。重建中的 slot 不计入 `active_workers`。
+Verification enters the long queue when its **original total budget** exceeds
+`--long-request-threshold` (default 120 seconds). All compilation and shorter
+verification use the normal queue. Routing does not predict duration or migrate
+running jobs. Use explicit budgets of at most 120 seconds for short verification;
+default-budget verification uses the long queue. A short duplicate waits for its
+identical long-running input; unrelated normal requests can pass it.
 
-pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
+`--verify-default-timeout` and `--verify-max-timeout` default to 600 seconds and
+must be finite with `0 < default <= maximum`. Compilation retains its separate
+120-second cap. Two historical slow proofs took about 419 and 597 seconds; use:
+
+```bash
+uv run lean-server --workers 2 --queue-capacity 8 \
+  --long-workers 2 --long-queue-capacity 2 \
+  --verify-default-timeout 1800 --verify-max-timeout 1800
+```
+
+This starts four Mathlib-loaded processes. Reserve enough CPU and memory: queue
+isolation is not an OS resource quota. Long budgets include queueing; keep batch
+concurrency near the long-worker count. Client and proxy timeouts must exceed the
+request budget; allow at least 15 extra seconds on clients. An explicit 600-second
+request remains 600 seconds despite a larger server default.
+
+Embedded `CompilerPool` adds no long workers by default; `create_runtime`,
+`create_server` and the CLI add one. `--long-workers 0` restores a shared queue
+without long-job isolation.
+
+Health/readiness reports `long_worker_count`, `long_active_workers`,
+`long_queue_depth` and `long_queue_capacity`. `worker_count`, `ready_workers` and
+`active_workers` include both lanes; `queue_depth` and `queue_capacity` describe
+only the normal queue.
+
+## Lifecycle and failures
+
+- Warm all backends with bounded startup concurrency before serving HTTP.
+- Replace workers after timeout, exit, EOF, invalid protocol, wrong request ID or `internal_error`.
+- Parser, elaborator and type errors return `compile_error` without replacement.
+- Oversized responses return non-retryable `WorkerMessageTooLarge`. Reuse the worker
+  after bounded draining; replace it if draining fails. See [byte limits](../protocol/README.md#response-size-limits).
+- Failed replacements back off exponentially from 50 ms to 2 seconds.
+- Shutdown cancels active/queued work and closes backends and process groups.
+- The pool also owns starting replacements; cancelling a handshake terminates and reaps them.
+- Drain stderr continuously in chunks, retaining the last 64 KiB and exposing at
+  most 100 lines. Long lines do not stop draining. Log cleanup errors and continue recovery.
+
+`timeout_seconds` covers queueing and execution from pool entry, including waits
+for replacement. Queued expiry or cancellation frees the slot immediately without
+execution. Running tasks receive only the remaining budget; timeout replaces their
+worker. Restarting slots are not counted as `active_workers`.
+
+Inspect pool state through `GET /healthz` and `GET /readyz`:
 
 ```json
 {
@@ -80,13 +122,55 @@ pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
   "active_workers": 1,
   "queue_depth": 2,
   "queue_capacity": 16,
-  "replacements": 0
+  "replacements": 0,
+  "quarantined_inputs": 0,
+  "quarantine_hits": 0,
+  "quarantine_evictions": 0
 }
 ```
 
-## HTTP 计时
+## Panic quarantine
 
-`POST /api/v1/check` 保留原来的 `time_ms`，并增加：
+The known `INTERNAL PANIC: Nat.pow exponent is too big` returns HTTP 503,
+`error_type: "LeanPanic"`, `retryable: false`. Verification did not finish; this is
+not an `okay: false` verdict. The first crash replaces the worker and records the
+input's SHA-256 fingerprint. Later identical requests are rejected before queueing;
+already queued duplicates receive the same error:
+
+```json
+{
+  "error": "worker previously panicked for this input; input is quarantined",
+  "retryable": false,
+  "error_type": "LeanPanic"
+}
+```
+
+Fingerprints include protocol version, operation and every worker input: code, or
+statement/content/`use_def_eq`. They omit request IDs, HTTP timeout and `allow_sorry`,
+which do not change worker computation. Store only hashes and error types, not
+proof text. Only explicitly input-related panics enter quarantine; ordinary errors,
+timeouts, protocol faults and other exits do not mark input bad.
+
+Only one worker runs a fingerprint at a time. Duplicates stay in the bounded queue
+with their own deadlines and cancellation. Dispatch picks the earliest runnable
+request, skipping blocked duplicates. Successful duplicates run separately with
+their own request IDs; results are not shared.
+
+Quarantine is local to one pool/process with a fixed Lean/Mathlib/worker environment.
+Restart after upgrades. The default capacity is 4096, configurable through
+`CompilerPool(quarantine_capacity=...)`. Entries use LRU eviction, have no expiry,
+clear on restart and are not shared across replicas. Protection lasts only while
+the exact input remains recorded; edits, eviction, restart or another replica may
+allow execution again. Health/readiness exposes `quarantine_hits` and
+`quarantine_evictions`.
+
+Healthy workers remain usable during replacement. With one worker, normal requests
+wait within their total budget. Quarantined requests neither wait for replacement
+nor occupy a worker.
+
+## HTTP timings
+
+`POST /check` retains `time_ms` and adds:
 
 ```json
 {
@@ -98,10 +182,10 @@ pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
 }
 ```
 
-当前 `queue_ms` 是 `total_ms - compile_ms`，包含很小的 transport 和调度开销。
-超时响应则根据实际出队时间分别记录等待与执行耗时；未开始执行的请求 `compile_ms` 为 0。
+`queue_ms = total_ms - compile_ms` includes small transport/scheduling costs.
+Timeout responses use actual dequeue time; `compile_ms` is zero if execution never began.
 
-请求可以通过 `allow_sorry` 控制是否接受包含 `sorry` 的代码：
+Control acceptance of incomplete code with:
 
 ```json
 {
@@ -110,17 +194,55 @@ pool 状态可以通过 `GET /healthz` 和 `GET /readyz` 查看：
 }
 ```
 
-`allow_sorry` 必须是 JSON boolean，默认值为 `false`。为 `false` 时，Lean 原始 sorry
-warning 仍保留在 `warnings` 中，同时响应增加一条策略 error 并返回 `okay: false`；为
-`true` 时，sorry 保持为 warning，若无其他错误则返回 `okay: true`。该策略位于 HTTP
-层，不改变冻结的 worker protocol v1。
+`allow_sorry` is a JSON boolean, default `false`. False preserves the original
+warning, adds a policy error and returns `okay: false`. True keeps only the warning
+and permits `okay: true` if no other errors exist. This HTTP policy does not change
+the worker protocol.
 
-## 测试边界
+## Test coverage
 
-- `tests/service/test_pool.py`：并发上限、FIFO、有界队列和关闭状态。
-- `tests/service/test_recovery.py`：timeout、crash、协议错误和 capacity recovery。
-- `tests/workers/test_process.py`：NDJSON subprocess transport。
-- `tests/workers/test_cli.py`：真实 Lean 4.30 CLI backend。
-- `tests/test_http.py`：HTTP success、compile error、warning、timeout、overload、crash 和 readiness。
+- `tests/service/test_pool.py`: concurrency, FIFO, bounds and shutdown.
+- `tests/service/test_recovery.py`: timeout, crash, protocol errors and recovery.
+- `tests/service/test_quarantine.py`: duplicate/concurrent panics, healthy work,
+  cancellation, deadlines, fingerprints, eviction and scheduling during replacement.
+- `tests/workers/test_process.py`: NDJSON subprocess transport.
+- `tests/workers/test_cli.py`: real Lean 4.30 CLI backend.
+- `tests/test_http.py`: success, errors, warnings, timeout, overload, crash and readiness.
 
-调度测试使用 `tests/fixtures/fake_worker.py`，因此不依赖任务 A 的实现。
+Scheduling tests use `tests/fixtures/fake_worker.py`, independent of task A.
+
+## Lean phase timings and slow profiles
+
+Both endpoints expose header parsing, command elaboration, diagnostic formatting/deduplication,
+and optional profile-export times. `/check` uses `timings.compilation`; `/verify_proof` uses
+`timings.formal_statement` and `timings.candidate`. Existing aggregate timings remain unchanged.
+Comparison failures also expose the declaration, type/value phase, exception category and original
+Lean message in `comparison_errors`; they are inconclusive checks rather than signature mismatches.
+
+To capture detailed profiles, set these environment variables before starting the service; workers
+inherit them:
+
+```bash
+export LEAN_SERVER_PROFILE_DIR=/tmp/lean-server-profiles
+export LEAN_SERVER_PROFILE_SLOW_MS=1000
+export LEAN_SERVER_PROFILE_THRESHOLD_MS=10
+```
+
+With `LEAN_SERVER_PROFILE_DIR` unset or empty, tracing and export are disabled. When enabled, Lean
+collects its nested profiler traces during elaboration. Each compile/formal/candidate phase whose
+elaboration takes at least `SLOW_MS` is exported as `lean-<pid>-<monotonic-nanoseconds>.json`.
+`THRESHOLD_MS` controls the minimum trace-node duration retained by Lean. Both thresholds accept
+non-negative integers; their defaults are 1000 ms and 10 ms. Set the trace threshold to zero for
+short diagnostic reproductions.
+
+Open the JSON file in Firefox Profiler to inspect declaration/tactic stacks and elapsed times.
+The profile name includes the request ID and input phase. A `lean_profile` JSON record on worker
+stderr also links the request ID, phase and file path; the service retains bounded stderr rather
+than forwarding a continuous log. Request IDs never become file-name components. Failed compilations
+can produce profiles too. A profile write failure logs to stderr without changing the proof verdict.
+
+Profiling adds collection overhead even for phases below the export threshold, and pretty-printing
+and export can be costly; use it for selected diagnostic runs. `profiling_ms` measures export cost,
+while trace collection is included in `elaboration_ms`. Hard-killed/time-limited workers cannot
+export their unfinished phase. Files are not automatically rotated; choose a suitable directory
+and retention policy for the diagnostic run.

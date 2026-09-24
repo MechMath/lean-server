@@ -76,6 +76,28 @@ class PoolRecoveryTests(unittest.IsolatedAsyncioTestCase):
         result = await self.pool.compile(WorkerRequest("following", "code"))
         self.assertEqual(result.status, "ok")
 
+    async def test_drained_oversize_response_preserves_capacity(self) -> None:
+        for attempt in range(3):
+            with self.assertRaises(PoolWorkerError) as caught:
+                await self.pool.compile(
+                    WorkerRequest(str(attempt), "__RESPONSE_BYTES__:8388609"), timeout_seconds=5,
+                )
+            self.assertEqual(caught.exception.error_type, "WorkerMessageTooLarge")
+            self.assertFalse(caught.exception.retryable)
+        self.assertEqual(self.pool.snapshot.replacements, 0)
+        result = await self.pool.compile(WorkerRequest("following", "healthy"))
+        self.assertEqual(result.status, "ok")
+
+    async def test_unterminated_oversize_response_replaces_worker_and_recovers(self) -> None:
+        with self.assertRaises(PoolWorkerError) as caught:
+            await self.pool.compile(WorkerRequest("unterminated", "__OVERSIZE_FLOOD__"),
+                                    timeout_seconds=5)
+        self.assertFalse(caught.exception.retryable)
+        self.assertEqual(caught.exception.error_type, "WorkerMessageTooLarge")
+        await wait_until_ready(self.pool, 2, replacements=1)
+        result = await self.pool.compile(WorkerRequest("following", "healthy"))
+        self.assertEqual(result.status, "ok")
+
     async def test_known_panic_is_not_retryable_and_capacity_recovers(self) -> None:
         with self.assertRaises(PoolWorkerError) as caught:
             await self.pool.compile(WorkerRequest("panic", "__NAT_POW_PANIC__"))

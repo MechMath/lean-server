@@ -1,0 +1,29 @@
+{
+  "protocol_version": 2,
+  "type": "verify_result",
+  "request_id": "verify-1",
+  "status": "ok",
+  "compile_ms": 4.0,
+  "formal_statement_ms": 1.0,
+  "candidate_ms": 2.0,
+  "declarations_ms": 1.0,
+  "warnings": [],
+  "errors": [],
+  "tool_errors": [],
+  "failed_declarations": [],
+  "timings": {
+    "formal_statement": {
+      "header_ms": 0,
+      "elaboration_ms": 0,
+      "diagnostics_ms": 0,
+      "profiling_ms": 0
+    },
+    "candidate": {
+      "header_ms": 0,
+      "elaboration_ms": 0,
+      "diagnostics_ms": 0,
+      "profiling_ms": 0
+    }
+  },
+  "comparison_errors": []
+}

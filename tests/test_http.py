@@ -20,6 +20,7 @@ class HTTPTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         runtime = create_runtime(
             worker_count=1,
+            long_worker_count=0,
             queue_capacity=1,
             worker_command=[sys.executable, str(FAKE_WORKER)],
         )
@@ -60,8 +61,8 @@ class HTTPTests(unittest.TestCase):
 
     def test_known_panic_is_explicit_and_not_a_proof_rejection(self) -> None:
         cases = (
-            ("/api/v1/check", {"code": "__NAT_POW_PANIC__"}),
-            ("/api/v1/verify_proof", {
+            ("/check", {"code": "__NAT_POW_PANIC__"}),
+            ("/verify_proof", {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": "__NAT_POW_PANIC__",
                 "environment": "lean-4.30.0",
@@ -69,11 +70,19 @@ class HTTPTests(unittest.TestCase):
         )
         for path, payload in cases:
             with self.subTest(path=path):
-                status, body = self.request("POST", path, payload)
-                self.assertEqual(status, 503)
-                self.assertEqual(body["error_type"], "LeanPanic")
-                self.assertFalse(body["retryable"])
-                self.assertNotIn("okay", body)
+                replacements = self.server.runtime.snapshot().replacements
+                for attempt in range(3):
+                    status, body = self.request("POST", path, payload)
+                    self.assertEqual(status, 503)
+                    self.assertEqual(body["error_type"], "LeanPanic")
+                    self.assertFalse(body["retryable"])
+                    self.assertNotIn("okay", body)
+                    if attempt:
+                        self.assertIn("quarantined", body["error"])
+                status, body = self.request("POST", "/check", {"code": "healthy after panic"})
+                self.assertEqual(status, 200)
+                self.assertTrue(body["okay"])
+                self.assertEqual(self.server.runtime.snapshot().replacements, replacements + 1)
 
     def test_ready(self) -> None:
         for _ in range(200):
@@ -84,20 +93,41 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "ready")
 
+    def test_oversize_response_is_nonretryable_and_worker_is_reused(self) -> None:
+        for path, payload in (
+            ("/check", {"code": "__RESPONSE_BYTES__:8388609"}),
+            ("/verify_proof", {"formal_statement": "statement", "environment": "lean-4.30.0",
+                               "content": "__RESPONSE_BYTES__:8388609"}),
+        ):
+            with self.subTest(path=path):
+                # Earlier tests may return before a failed slot finishes replacing.
+                self.request("POST", "/check", {"code": "warmup before size test"})
+                before = self.server.runtime.snapshot().replacements
+                for _ in range(2):
+                    status, body = self.request("POST", path, payload)
+                    self.assertEqual(status, 503)
+                    self.assertEqual(body["error_type"], "WorkerMessageTooLarge")
+                    self.assertFalse(body["retryable"])
+                    self.assertNotIn("okay", body)
+                status, body = self.request("POST", "/check", {"code": "healthy after oversize"})
+                self.assertEqual(status, 200)
+                self.assertTrue(body["okay"])
+                self.assertEqual(self.server.runtime.snapshot().replacements, before)
+
     def test_rejects_missing_code(self) -> None:
-        status, body = self.request("POST", "/api/v1/check", {})
+        status, body = self.request("POST", "/check", {})
         self.assertEqual(status, 400)
         self.assertIn("code", body["error"])
 
     def test_rejects_invalid_allow_sorry(self) -> None:
         status, body = self.request(
-            "POST", "/api/v1/check", {"code": "code", "allow_sorry": "yes"}
+            "POST", "/check", {"code": "code", "allow_sorry": "yes"}
         )
         self.assertEqual(status, 400)
         self.assertIn("allow_sorry", body["error"])
 
     def test_compiles_valid_code(self) -> None:
-        status, body = self.request("POST", "/api/v1/check", {"code": "def answer : Nat := 42"})
+        status, body = self.request("POST", "/check", {"code": "def answer : Nat := 42"})
         self.assertEqual(status, 200)
         self.assertTrue(body["okay"])
         self.assertGreater(body["time_ms"], 0)
@@ -107,7 +137,7 @@ class HTTPTests(unittest.TestCase):
     def test_returns_lean_warning(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/check",
+            "/check",
             {"code": "__WARNING__"},
         )
         self.assertEqual(status, 200)
@@ -116,7 +146,7 @@ class HTTPTests(unittest.TestCase):
 
     def test_returns_lean_error(self) -> None:
         status, body = self.request(
-            "POST", "/api/v1/check", {"code": "__ERROR__"}
+            "POST", "/check", {"code": "__ERROR__"}
         )
         self.assertEqual(status, 200)
         self.assertFalse(body["okay"])
@@ -125,7 +155,7 @@ class HTTPTests(unittest.TestCase):
     def test_returns_timeout_result(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/check",
+            "/check",
             {"code": "__SLEEP__:1", "timeout_seconds": 0.05},
         )
         self.assertEqual(status, 200)
@@ -135,14 +165,14 @@ class HTTPTests(unittest.TestCase):
     def test_queue_timeout_does_not_count_as_compilation(self) -> None:
         with ThreadPoolExecutor(max_workers=1) as executor:
             active = executor.submit(
-                self.request, "POST", "/api/v1/check", {"code": "__SLEEP__:0.2"}
+                self.request, "POST", "/check", {"code": "__SLEEP__:0.2"}
             )
             deadline = time.monotonic() + 2
             while self.server.runtime.snapshot().active_workers == 0:
                 self.assertLess(time.monotonic(), deadline)
                 time.sleep(0.001)
             status, body = self.request(
-                "POST", "/api/v1/check", {"code": "code", "timeout_seconds": 0.02}
+                "POST", "/check", {"code": "code", "timeout_seconds": 0.02}
             )
             self.assertEqual(status, 200)
             self.assertTrue(body["timed_out"])
@@ -152,7 +182,7 @@ class HTTPTests(unittest.TestCase):
             self.assertTrue(active.result()[1]["okay"])
 
     def test_rejects_sorry_by_default(self) -> None:
-        status, body = self.request("POST", "/api/v1/check", {"code": "__SORRY__"})
+        status, body = self.request("POST", "/check", {"code": "__SORRY__"})
         self.assertEqual(status, 200)
         self.assertFalse(body["okay"])
         self.assertEqual(body["warnings"][0]["message"], "declaration uses `sorry`")
@@ -161,7 +191,7 @@ class HTTPTests(unittest.TestCase):
     def test_accepts_sorry_when_enabled(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/check",
+            "/check",
             {"code": "__SORRY__", "allow_sorry": True},
         )
         self.assertEqual(status, 200)
@@ -173,7 +203,7 @@ class HTTPTests(unittest.TestCase):
         candidate = "theorem answer : True := by trivial"
         status, body = self.request(
             "POST",
-            "/api/v1/verify_proof",
+            "/verify_proof",
             {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": candidate,
@@ -194,7 +224,7 @@ class HTTPTests(unittest.TestCase):
     def test_verify_proof_accepts_axle_sdk_text_plain_json(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/verify_proof",
+            "/verify_proof",
             {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": "theorem answer : True := by trivial",
@@ -209,7 +239,7 @@ class HTTPTests(unittest.TestCase):
     def test_check_still_rejects_text_plain(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/check",
+            "/check",
             {"code": "def answer := 42"},
             content_type="text/plain",
         )
@@ -220,7 +250,7 @@ class HTTPTests(unittest.TestCase):
     def test_verify_proof_returns_semantic_failure_as_http_200(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/verify_proof",
+            "/verify_proof",
             {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": "__TOOL_ERROR__",
@@ -236,7 +266,7 @@ class HTTPTests(unittest.TestCase):
     def test_verify_proof_returns_lean_error_as_http_200(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/verify_proof",
+            "/verify_proof",
             {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": "__ERROR__",
@@ -251,7 +281,7 @@ class HTTPTests(unittest.TestCase):
     def test_verify_proof_timeout_uses_axle_error_envelope(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/verify_proof",
+            "/verify_proof",
             {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": "__SLEEP__:1",
@@ -271,18 +301,18 @@ class HTTPTests(unittest.TestCase):
             "environment": "lean-4.30.0",
             "timeout_seconds": 600,
         }
-        status, body = self.request("POST", "/api/v1/verify_proof", payload)
+        status, body = self.request("POST", "/verify_proof", payload)
         self.assertEqual(status, 200)
         self.assertTrue(body["okay"])
         for invalid in (601, 0, -1, True, float("inf"), float("nan")):
             with self.subTest(timeout=invalid):
                 status, body = self.request(
-                    "POST", "/api/v1/verify_proof", {**payload, "timeout_seconds": invalid}
+                    "POST", "/verify_proof", {**payload, "timeout_seconds": invalid}
                 )
                 self.assertEqual(status, 400)
                 self.assertIn("timeout_seconds", body["error"])
         status, body = self.request(
-            "POST", "/api/v1/check", {"code": "def answer := 42", "timeout_seconds": 121}
+            "POST", "/check", {"code": "def answer := 42", "timeout_seconds": 121}
         )
         self.assertEqual(status, 400)
         self.assertIn("timeout_seconds", body["error"])
@@ -290,7 +320,7 @@ class HTTPTests(unittest.TestCase):
     def test_verify_proof_maps_worker_failure_to_retryable_503(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/verify_proof",
+            "/verify_proof",
             {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": "__INTERNAL_ERROR__",
@@ -319,7 +349,7 @@ class HTTPTests(unittest.TestCase):
         for update, expected in cases:
             with self.subTest(update=update):
                 status, body = self.request(
-                    "POST", "/api/v1/verify_proof", {**base, **update}
+                    "POST", "/verify_proof", {**base, **update}
                 )
                 self.assertEqual(status, 400)
                 self.assertIn(expected, body["error"])
@@ -327,7 +357,7 @@ class HTTPTests(unittest.TestCase):
     def test_verify_proof_rejects_non_boolean_use_def_eq(self) -> None:
         status, body = self.request(
             "POST",
-            "/api/v1/verify_proof",
+            "/verify_proof",
             {
                 "formal_statement": "theorem answer : True := by sorry",
                 "content": "theorem answer : True := by trivial",
@@ -340,7 +370,7 @@ class HTTPTests(unittest.TestCase):
         self.assertIn("use_def_eq", body["error"])
 
     def test_maps_worker_crash_to_retryable_error(self) -> None:
-        status, body = self.request("POST", "/api/v1/check", {"code": "__CRASH__"})
+        status, body = self.request("POST", "/check", {"code": "__CRASH__"})
         self.assertEqual(status, 503)
         self.assertTrue(body["retryable"])
 
@@ -349,18 +379,18 @@ class HTTPTests(unittest.TestCase):
             active = executor.submit(
                 self.request,
                 "POST",
-                "/api/v1/check",
+                "/check",
                 {"code": "__SLEEP__:0.2"},
             )
             self._wait_for_pool(active_workers=1, queue_depth=0)
             queued = executor.submit(
                 self.request,
                 "POST",
-                "/api/v1/check",
+                "/check",
                 {"code": "code"},
             )
             self._wait_for_pool(active_workers=1, queue_depth=1)
-            status, body = self.request("POST", "/api/v1/check", {"code": "rejected"})
+            status, body = self.request("POST", "/check", {"code": "rejected"})
 
             self.assertEqual(status, 503)
             self.assertTrue(body["retryable"])
@@ -377,6 +407,80 @@ class HTTPTests(unittest.TestCase):
                 return
             time.sleep(0.005)
         self.fail(f"pool state not reached: {self.server.runtime.snapshot()}")
+
+
+class ConfiguredVerificationHTTPTests(unittest.TestCase):
+    request = HTTPTests.request
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = create_server(
+            "127.0.0.1", 0, worker_count=1, long_worker_count=1,
+            queue_capacity=1, long_queue_capacity=1,
+            worker_command=[sys.executable, str(FAKE_WORKER)],
+            verify_default_timeout_seconds=900, verify_max_timeout_seconds=1800,
+        )
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+        cls.port = cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join()
+
+    def payload(self, content="healthy", **options):
+        return {"formal_statement": "statement", "environment": "lean-4.30.0",
+                "content": content, **options}
+
+    def wait_for(self, condition):
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if condition(self.server.runtime.snapshot()):
+                return
+            time.sleep(0.001)
+        self.fail(f"pool state not reached: {self.server.runtime.snapshot()}")
+
+    def test_deployment_maximum_is_configurable_and_compile_bound_is_preserved(self):
+        for timeout in (601, 1800):
+            status, body = self.request("POST", "/verify_proof", self.payload(timeout_seconds=timeout))
+            self.assertEqual(status, 200)
+            self.assertTrue(body["okay"])
+        for timeout in (1801, 0, -1, True, float("nan"), float("inf")):
+            status, body = self.request("POST", "/verify_proof", self.payload(timeout_seconds=timeout))
+            self.assertEqual(status, 400)
+            self.assertIn("timeout_seconds", body["error"])
+        status, _ = self.request("POST", "/check", {"code": "healthy", "timeout_seconds": 121})
+        self.assertEqual(status, 400)
+
+    def test_default_budget_uses_isolated_long_queue_and_overload_is_local(self):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(self.request, "POST", "/verify_proof", self.payload("__SLEEP__:0.5"))
+            self.wait_for(lambda s: s.long_active_workers == 1)
+            second = executor.submit(self.request, "POST", "/verify_proof", self.payload("queued"))
+            self.wait_for(lambda s: s.long_queue_depth == 1)
+            status, body = self.request("POST", "/verify_proof", self.payload("overflow"))
+            self.assertEqual(status, 503)
+            self.assertEqual(body["error"], "long verification queue is full")
+            self.assertTrue(body["retryable"])
+            for path, payload in (("/check", {"code": "healthy"}),
+                                  ("/verify_proof", self.payload(timeout_seconds=120))):
+                status, body = self.request("POST", path, payload)
+                self.assertEqual(status, 200)
+                self.assertTrue(body["okay"])
+            self.assertFalse(first.done())
+            for future in (first, second):
+                status, body = future.result()
+                self.assertEqual(status, 200)
+                self.assertTrue(body["okay"])
+
+    def test_invalid_timeout_configuration_fails_before_server_start(self):
+        for default, maximum in ((0, 10), (10, 0), (20, 10), (float("nan"), 10), (10, float("inf"))):
+            with self.subTest(default=default, maximum=maximum):
+                with self.assertRaisesRegex(ValueError, "verification timeouts"):
+                    create_server("127.0.0.1", 0, verify_default_timeout_seconds=default,
+                                  verify_max_timeout_seconds=maximum)
 
 
 if __name__ == "__main__":

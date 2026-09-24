@@ -1,31 +1,37 @@
-# ADR-0002：固定 Lean/Mathlib 环境
+# ADR-0002: Pinned Lean/Mathlib environment
 
-- 状态：Proposed
-- 日期：2026-09-18
+- Status: Proposed
+- Date: 2026-09-18
 
-## 背景
+## Context
 
-Lean 证明依赖精确的 Lean、Mathlib 和项目依赖版本。允许请求动态改变依赖会破坏可复现性，也会迫使 worker 重新构建或加载环境。
+Proofs depend on exact Lean, Mathlib and dependency versions. Runtime changes
+break reproducibility and force workers to rebuild or reload.
 
-## 决策
+## Decision
 
-初始环境 ID 为 `lean-4.30.0`，固定：
+Environment `lean-4.30.0` pins:
 
-- Lean toolchain `v4.30.0`；
-- Mathlib tag/revision `v4.30.0`；
-- 与该版本兼容的 Lean REPL revision；
-- 本项目严格验证 metaprogram 的精确 commit；
-- 默认用户可见 header 为 `import Mathlib`。
+- Lean toolchain `v4.30.0`.
+- Mathlib tag/revision `v4.30.0`.
+- A compatible Lean REPL revision.
+- The verifier metaprogram commit.
+- Default header `import Mathlib`.
 
-环境在镜像构建阶段完成依赖下载、`lake update`、Mathlib cache 获取和 verifier build。运行中的服务不访问网络，也不修改依赖。
+Download dependencies, run `lake update`, fetch Mathlib caches and build the
+verifier when building the image. Running services do not access the network or
+change dependencies.
 
-每个环境通过 manifest 记录版本、Git revision、构建时间和产物摘要。API 接受显式的 `environment`，未知值立即失败，不静默回退。
+A manifest records versions, Git revisions, build time and artifact hashes.
+The API requires an explicit environment and rejects unknown values without fallback.
 
-candidate 中的 import 默认按 AXLE `ignore_imports=true` 的思路归一为注册环境的固定 header。是否支持 `ignore_imports=false` 延后决定。
+Candidate imports default to the fixed header, following AXLE's
+`ignore_imports=true`. Support for `ignore_imports=false` is deferred.
 
-## 后果
+## Consequences
 
-- 所有 benchmark 和回归结果可复现。
-- `import MiniF2F.ProblemImports` 等环境外依赖不会被运行时解析；数据必须使用 `import Mathlib` 或注册新的环境。
-- 增加 Lean 版本意味着新增一个完整的预构建环境，而不是修改现有环境。
-- 镜像和缓存占用增加，但请求热路径更简单、稳定。
+- Benchmarks and regressions are reproducible.
+- External imports such as `MiniF2F.ProblemImports` are not resolved at runtime;
+  use `import Mathlib` or register another environment.
+- A new Lean version requires a new prebuilt environment.
+- Larger images and caches simplify the request path.

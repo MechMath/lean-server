@@ -4,6 +4,7 @@ import asyncio
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from lean_server.protocol import VerifyWorkerRequest, VerifyWorkerResult, WorkerRequest
 from lean_server.workers import (
@@ -11,7 +12,10 @@ from lean_server.workers import (
     WorkerProtocolError,
     WorkerStartupError,
 )
-from lean_server.workers.process import MAX_STDERR_TAIL_BYTES
+from lean_server.workers.process import (
+    MAX_STDERR_TAIL_BYTES, MAX_WORKER_MESSAGE_BYTES,
+    WorkerMessageTooLargeError, WorkerPanicError,
+)
 
 
 FAKE_WORKER = Path(__file__).parents[1] / "fixtures" / "fake_worker.py"
@@ -46,7 +50,7 @@ class WorkerProcessTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(WorkerProtocolError):
             await self.worker.compile(WorkerRequest("req-invalid", "__INVALID_JSON__"))
 
-    async def test_verifies_with_v2_after_v1_ready_handshake(self) -> None:
+    async def test_verifies_after_ready_handshake(self) -> None:
         result = await self.worker.compile(
             VerifyWorkerRequest(
                 "verify-1",
@@ -85,6 +89,55 @@ class WorkerProcessTests(unittest.IsolatedAsyncioTestCase):
             await worker.start()
         await worker.close()
 
+    async def test_exact_wire_size_boundaries_and_reuse(self) -> None:
+        pid = self.worker.pid
+        for verify in (False, True):
+            for delta in (-1, 0, 1, 2 * MAX_WORKER_MESSAGE_BYTES):
+                with self.subTest(verify=verify, delta=delta):
+                    content = f"__RESPONSE_BYTES__:{MAX_WORKER_MESSAGE_BYTES + delta}"
+                    request = (VerifyWorkerRequest("sized", "statement", content) if verify
+                               else WorkerRequest("sized", content))
+                    if delta > 0:
+                        with self.assertRaises(WorkerMessageTooLargeError) as caught:
+                            await asyncio.wait_for(self.worker.compile(request), timeout=5)
+                        self.assertFalse(caught.exception.retryable)
+                        self.assertFalse(caught.exception.replace_worker)
+                    else:
+                        result = await asyncio.wait_for(self.worker.compile(request), timeout=5)
+                        self.assertEqual(result.status, "ok")
+                    following = await self.worker.compile(WorkerRequest("following", "healthy"))
+                    self.assertEqual(following.request_id, "following")
+                    self.assertEqual(self.worker.pid, pid)
+
+    async def test_unterminated_oversize_frames_have_bounded_cleanup(self) -> None:
+        for mode in ("EOF", "STALL", "FLOOD"):
+            with self.subTest(mode=mode):
+                worker = WorkerProcessBackend([sys.executable, str(FAKE_WORKER)])
+                await worker.start()
+                try:
+                    with self.assertRaises(WorkerMessageTooLargeError) as caught:
+                        await asyncio.wait_for(worker.compile(
+                            WorkerRequest("unterminated", f"__OVERSIZE_{mode}__")
+                        ), timeout=5)
+                    self.assertFalse(caught.exception.retryable)
+                    self.assertTrue(caught.exception.replace_worker)
+                finally:
+                    await worker.close()
+
+    async def test_rejects_old_worker_at_startup(self) -> None:
+        worker = WorkerProcessBackend([
+            sys.executable,
+            "-c",
+            'import time; print(\'{"protocol_version":1,"type":"ready",'
+            '"lean_version":"4.30.0"}\', flush=True); time.sleep(60)',
+        ])
+        try:
+            with self.assertRaisesRegex(WorkerStartupError, "unsupported worker protocol_version"):
+                await worker.start()
+            self.assertIsNotNone(worker.returncode)
+        finally:
+            await worker.close()
+
     async def test_drains_oversized_stderr_and_bounds_retained_output(self) -> None:
         result = await asyncio.wait_for(
             self.worker.compile(WorkerRequest("flood", "__STDERR_FLOOD__")), timeout=5
@@ -114,6 +167,55 @@ class WorkerProcessTests(unittest.IsolatedAsyncioTestCase):
         finally:
             startup.cancel()
             await asyncio.gather(startup, return_exceptions=True)
+            await worker.close()
+
+    async def test_cancelling_process_creation_reaps_process(self) -> None:
+        worker = WorkerProcessBackend([sys.executable, str(FAKE_WORKER)])
+        spawned = asyncio.Event()
+        release = asyncio.Event()
+        create_subprocess = asyncio.create_subprocess_exec
+        processes = []
+
+        async def delayed_spawn(*args, **kwargs):
+            process = await create_subprocess(*args, **kwargs)
+            processes.append(process)
+            spawned.set()
+            await release.wait()
+            return process
+
+        with patch("lean_server.workers.process.asyncio.create_subprocess_exec", delayed_spawn):
+            startup = asyncio.create_task(worker.start())
+            try:
+                await asyncio.wait_for(spawned.wait(), timeout=2)
+                self.assertIsNone(worker.pid)
+                startup.cancel()
+                release.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(startup, timeout=3)
+                self.assertIsNotNone(processes[0].returncode)
+            finally:
+                release.set()
+                startup.cancel()
+                await asyncio.gather(startup, return_exceptions=True)
+                await worker.close()
+
+    async def test_panic_is_typed_even_if_process_exits_before_response_read(self) -> None:
+        class DelayedReader(WorkerProcessBackend):
+            async def _read_message(self):
+                if self.pid is not None and self.wait_for_exit:
+                    async with asyncio.timeout(2):
+                        while self.returncode is None:
+                            await asyncio.sleep(0.001)
+                return await super()._read_message()
+
+        worker = DelayedReader([sys.executable, str(FAKE_WORKER)])
+        worker.wait_for_exit = False
+        await worker.start()
+        try:
+            worker.wait_for_exit = True
+            with self.assertRaises(WorkerPanicError):
+                await worker.compile(WorkerRequest("panic", "__NAT_POW_PANIC__"))
+        finally:
             await worker.close()
 
 

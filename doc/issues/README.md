@@ -2,11 +2,11 @@
 
 This directory stores reproducible feedback collected from large-scale Lean
 server validation runs. Each run has its own dated directory containing the
-analysis and compact summary data. Large per-record archives and run logs are
-kept outside the repository.
+analysis and compact summary data. Large per-record archives and generated run
+logs are kept outside the repository; existing final test evidence is retained.
 
 Active work is tracked in [GitHub Issues](https://github.com/MechMath/lean-server/issues),
-not in standalone issue documents here. The current tracking set is intentionally
+while standalone issue documents here retain historical evidence. The tracking set is intentionally
 small:
 
 - [#4](https://github.com/MechMath/lean-server/issues/4): strict verification,
